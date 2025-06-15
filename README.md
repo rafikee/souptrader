@@ -1,6 +1,6 @@
 # SoupTrader
 
-A trading performance tracking system that integrates with Alpaca API to track and analyze trading performance.
+A trading performance tracking system that integrates with Alpaca API to track and analyze trading performance. In my version I manually uploaded historical data not from Alpaca into the db. Now this program updates my database from Alpaca daily.
 
 ## Setup
 
