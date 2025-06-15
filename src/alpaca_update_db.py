@@ -24,7 +24,7 @@ APCA_API_SECRET_KEY = os.getenv('APCA_API_SECRET_KEY')
 
 try:
     logging.info('Starting Alpaca DB update')
-    conn = sqlite3.connect(os.path.join(PROJECT_ROOT, 'data', 'souptrader.db'))
+    conn = sqlite3.connect('/home/ubuntu/souptrader/data/souptrader.db')
 
     # get ALL existing order IDs
     order_ids_db = pd.read_sql_query("""

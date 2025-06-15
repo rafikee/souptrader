@@ -370,7 +370,7 @@ def calculate_yearly_profits(df):
 # Connect to database and get data
 try:
     logging.info('Starting summary update')
-    conn = sqlite3.connect('souptrader.db')
+    conn = sqlite3.connect('/home/ubuntu/souptrader/data/souptrader.db')
     df = pd.read_sql_query("SELECT * FROM trades", conn)
     conn.close()
 
@@ -378,7 +378,7 @@ try:
     logging.info('Calculated yearly profits and metrics')
 
     # connect to database for updating tables
-    conn = sqlite3.connect('souptrader.db')
+    conn = sqlite3.connect('/home/ubuntu/souptrader/data/souptrader.db')
     cursor = conn.cursor()
 
     # populate monthly_summary

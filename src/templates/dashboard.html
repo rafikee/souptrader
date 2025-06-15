@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>SoupTrader Dashboard</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 2rem;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: right;
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
+
+        h2 {
+            text-align: left;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>SoupTrader Dashboard</h1>
+
+    <h2>Monthly Summary</h2>
+    <table>
+        <tr>
+            <th>Month</th>
+            <th>Profit</th>
+        </tr>
+        {% for row in monthly %}
+        <tr>
+            <td>{{ row.month }}</td>
+            <td>${{ "%.2f"|format(row.realized_profit) }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <h2>Quarterly Summary</h2>
+    <table>
+        <tr>
+            <th>Quarter</th>
+            <th>Profit</th>
+            <th>Deposits</th>
+            <th>Annualized Return (%)</th>
+        </tr>
+        {% for row in quarterly %}
+        <tr>
+            <td>{{ row.quarter }}</td>
+            <td>${{ "%.2f"|format(row.realized_profit) }}</td>
+            <td>${{ "%.2f"|format(row.cumulative_deposits) }}</td>
+            <td>{{ "%.2f"|format(row.annualized_return) }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <h2>Yearly Summary</h2>
+    <table>
+        <tr>
+            <th>Year</th>
+            <th>Profit</th>
+            <th>Deposits</th>
+            <th>Return (%)</th>
+            <th>Trades</th>
+            <th>Win Rate (%)</th>
+        </tr>
+        {% for row in yearly %}
+        <tr>
+            <td>{{ row.year }}</td>
+            <td>${{ "%.2f"|format(row.realized_profit) }}</td>
+            <td>${{ "%.2f"|format(row.total_deposits) }}</td>
+            <td>{{ "%.2f"|format(row.annualized_return) }}</td>
+            <td>{{ row.total_trades_closed }}</td>
+            <td>{{ "%.2f"|format(row.win_rate) }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <h2>Stock Performance by Year</h2>
+    <table>
+        <tr>
+            <th>Ticker</th>
+            <th>Year</th>
+            <th>Profit</th>
+        </tr>
+        {% for row in by_stock %}
+        <tr>
+            <td>{{ row.ticker }}</td>
+            <td>{{ row.year }}</td>
+            <td>${{ "%.2f"|format(row.profit) }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+
+</html>
