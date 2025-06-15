@@ -7,7 +7,7 @@ import logging
 import os
 
 # Get the project root directory
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 logging.basicConfig(
     filename=os.path.join(PROJECT_ROOT, 'logs', 'summary_update.log'),

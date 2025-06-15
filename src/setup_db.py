@@ -2,7 +2,7 @@ import sqlite3
 import logging
 
 logging.basicConfig(
-    filename='/home/ubuntu/souptrader/setup.log',
+    filename='/home/ubuntu/souptrader/logs/setup.log',
     level=logging.INFO,
     format='%(asctime)s - %(message)s'
 )
@@ -10,7 +10,7 @@ logging.basicConfig(
 def create_tables():
     try:
         logging.info('Starting database setup')
-        conn = sqlite3.connect('souptrader.db')
+        conn = sqlite3.connect('/home/ubuntu/souptrader/data/souptrader.db')
         cursor = conn.cursor()
 
         # Create trades table
