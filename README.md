@@ -4,43 +4,13 @@ A trading performance tracking system that integrates with Alpaca API to track a
 
 ## Setup
 
-1. Clone the repository
-```bash
-git clone <repository-url>
-cd souptrader
-```
-
-2. Create and activate a virtual environment
-
-If you are starting from scratch:
-```bash
-python3 -m venv .
-source bin/activate
-```
-
-If you already have a virtual environment set up in your project directory:
-```bash
-cd souptrader
-source bin/activate
-```
-
-3. Install required packages
-```bash
-pip install -r requirements.txt
-```
-
-Required packages (listed in requirements.txt):
-- pandas: For data manipulation and analysis
-- python-dotenv: For loading environment variables
-- requests: For making API calls to Alpaca
-
-4. Create a `.env` file with your Alpaca API credentials
+1. Create a `.env` file with your Alpaca API credentials
 ```bash
 cp .env.example .env
 # Edit .env with your actual API credentials
 ```
 
-5. Initialize the database
+2. Initialize the database
 ```bash
 python3 setup_db.py
 ```

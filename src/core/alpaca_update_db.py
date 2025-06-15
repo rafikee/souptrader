@@ -1,7 +1,11 @@
 import logging
+import os
+
+# Get the project root directory
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logging.basicConfig(
-    filename='/home/ubuntu/souptrader/alpaca_update.log',
+    filename=os.path.join(PROJECT_ROOT, 'logs', 'alpaca_update.log'),
     level=logging.INFO,
     format='%(asctime)s - %(message)s'
 )
@@ -11,7 +15,6 @@ import json
 import pandas as pd
 import sqlite3
 from dotenv import load_dotenv
-import os
 
 # Load environment variables
 load_dotenv()
@@ -21,7 +24,7 @@ APCA_API_SECRET_KEY = os.getenv('APCA_API_SECRET_KEY')
 
 try:
     logging.info('Starting Alpaca DB update')
-    conn = sqlite3.connect('souptrader.db')
+    conn = sqlite3.connect(os.path.join(PROJECT_ROOT, 'data', 'souptrader.db'))
 
     # get ALL existing order IDs
     order_ids_db = pd.read_sql_query("""

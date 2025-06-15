@@ -4,9 +4,13 @@ from collections import defaultdict
 from datetime import datetime
 import numpy as np
 import logging
+import os
+
+# Get the project root directory
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logging.basicConfig(
-    filename='/home/ubuntu/souptrader/summary_update.log',
+    filename=os.path.join(PROJECT_ROOT, 'logs', 'summary_update.log'),
     level=logging.INFO,
     format='%(asctime)s - %(message)s'
 )
