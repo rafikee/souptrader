@@ -11,20 +11,25 @@ cd souptrader
 ```
 
 2. Create and activate a virtual environment
+
+If you are starting from scratch:
 ```bash
-pyvenv venv
-source venv/bin/activate
+python3 -m venv .
+source bin/activate
+```
+
+If you already have a virtual environment set up in your project directory:
+```bash
+cd souptrader
+source bin/activate
 ```
 
 3. Install required packages
 ```bash
-# Install packages individually
-pip install pandas
-pip install python-dotenv
-pip install requests
+pip install -r requirements.txt
 ```
 
-Required packages:
+Required packages (listed in requirements.txt):
 - pandas: For data manipulation and analysis
 - python-dotenv: For loading environment variables
 - requests: For making API calls to Alpaca
