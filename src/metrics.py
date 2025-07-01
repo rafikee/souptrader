@@ -342,7 +342,7 @@ def calculate_yearly_profits(df):
     return profit_df, yearly_metrics, quarterly_metrics, all_trades, all_dividends, all_options
 
 # Connect to database and get data
-conn = sqlite3.connect('souptrader.db')
+conn = sqlite3.connect('/home/ubuntu/souptrader/data/souptrader.db')
 df = pd.read_sql_query("SELECT * FROM trades", conn)
 conn.close()
 

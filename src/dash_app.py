@@ -42,6 +42,7 @@ def load_data():
 
 # Create the layout
 def create_layout():
+    # Load fresh data from database on each page load
     monthly_df, quarterly_df, yearly_df = load_data()
     
     # Create columns list, excluding the original realized_profit
@@ -198,6 +199,8 @@ def create_layout():
             page_size=20  # optional pagination
         )
     ])
+
+
 
 app.layout = create_layout
 
