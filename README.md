@@ -4,6 +4,8 @@ A trading performance tracking system that integrates with Alpaca API to track a
 
 ## Setup
 
+Firstly you'll have to create a python virtual environment. I createed venv folder in the root. Then make sure to install all the requirements.
+
 1. Create a `.env` file with your Alpaca API credentials
 ```bash
 cp .env.example .env
@@ -27,6 +29,8 @@ You can run both scripts using:
 ./run_alpaca_update.sh
 ```
 
+Then there is the dashboard, there is a script that runs the dashboard in the background
+
 ## Database Structure
 
 The system uses SQLite with the following tables:
@@ -43,3 +47,9 @@ Logs are stored in:
 - `alpaca_update.log` - Alpaca API update logs
 - `summary_update.log` - Performance calculation logs
 - `setup.log` - Database setup logs 
+
+## Things to consider 
+
+- There is a cronjob that runs this script at 1 am daily run_alpaca_update.sh
+- You need to make sure all the paths are updated in the scripts and in the py files
+- Any historic trades not from alpaca need to be loaded manually
