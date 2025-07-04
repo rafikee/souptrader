@@ -10,7 +10,7 @@ app.title = "SoupTrader Dashboard"
 
 def load_data():
     # Connect to SQLite database
-    conn = sqlite3.connect('/home/ubuntu/souptrader/data/souptrader.db')
+    conn = sqlite3.connect('/home/rafikee/dev/souptrader/data/souptrader.db')
     
     # Load monthly data and sort by month in descending order
     monthly_df = pd.read_sql_query("SELECT * FROM monthly_summary ORDER BY month DESC", conn)
