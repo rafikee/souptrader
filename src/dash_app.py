@@ -2,6 +2,10 @@ import dash
 from dash import html, dcc, dash_table
 import pandas as pd
 import sqlite3
+import os
+
+# Get the project root directory
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -9,8 +13,9 @@ app = dash.Dash(__name__)
 app.title = "SoupTrader Dashboard"
 
 def load_data():
-    # Connect to SQLite database
-    conn = sqlite3.connect('/home/rafikee/dev/souptrader/data/souptrader.db')
+    # Connect to SQLite database using relative path
+    db_path = os.path.join(PROJECT_ROOT, 'data', 'souptrader.db')
+    conn = sqlite3.connect(db_path)
     
     # Load monthly data and sort by month in descending order
     monthly_df = pd.read_sql_query("SELECT * FROM monthly_summary ORDER BY month DESC", conn)
@@ -205,4 +210,4 @@ def create_layout():
 app.layout = create_layout
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=8080) 
+    app.run(debug=True, host='0.0.0.0', port=8050) 

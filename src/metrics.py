@@ -5,6 +5,10 @@ import pandas as pd
 from collections import defaultdict
 from datetime import datetime
 import numpy as np
+import os
+
+# Get the project root directory
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def calculate_yearly_profits(df):
     """
@@ -342,7 +346,8 @@ def calculate_yearly_profits(df):
     return profit_df, yearly_metrics, quarterly_metrics, all_trades, all_dividends, all_options
 
 # Connect to database and get data
-conn = sqlite3.connect('/home/rafikee/dev/souptrader/data/souptrader.db')
+db_path = os.path.join(PROJECT_ROOT, 'data', 'souptrader.db')
+conn = sqlite3.connect(db_path)
 df = pd.read_sql_query("SELECT * FROM trades", conn)
 conn.close()
 

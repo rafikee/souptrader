@@ -25,12 +25,43 @@ def calculate_yearly_profits(df):
     """
     # Hard-coded quarterly deposits
     QUARTERLY_DEPOSITS = {
+        '2014-Q1': 100, # placeholder
+        '2014-Q2': 100, # placeholder
+        '2014-Q3': 100, # placeholder
+        '2014-Q4': 100, # placeholder
+        '2015-Q1': 100, # placeholder
+        '2015-Q2': 100, # placeholder
+        '2015-Q3': 100, # placeholder
+        '2015-Q4': 100, # placeholder
+        '2016-Q1': 100, # placeholder
+        '2016-Q2': 100, # placeholder
+        '2016-Q3': 100, # placeholder
+        '2016-Q4': 100, # placeholder
+        '2017-Q1': 100, # placeholder
+        '2017-Q2': 100, # placeholder
+        '2017-Q3': 100, # placeholder
+        '2017-Q4': 100, # placeholder
+        '2018-Q1': 100, # placeholder
+        '2018-Q2': 100, # placeholder
+        '2018-Q3': 100, # placeholder
+        '2018-Q4': 100, # placeholder
+        '2019-Q1': 100, # placeholder
+        '2019-Q2': 100, # placeholder
+        '2019-Q3': 100, # placeholder
+        '2019-Q4': 100, # placeholder
         '2020-Q1': 26_000,
         '2020-Q2': -17_500, # adding new deposits but removing amount invested in SPUS and QQQ
         '2020-Q3': -2_500,
         '2020-Q4': 0, # 5k withdrawn at end of year but didn't include since we traded with it
         '2021-Q1': 19_000,
-        '2023-Q1': 0,
+        '2021-Q2': 100, # placeholder
+        '2021-Q3': 100, # placeholder
+        '2021-Q4': 100, # placeholder
+        '2022-Q1': 100, # placeholder
+        '2022-Q2': 100, # placeholder
+        '2022-Q3': 100, # placeholder
+        '2022-Q4': 100, # placeholder
+        '2023-Q1': 100,
         '2023-Q2': 0,
         '2023-Q3': 5_359.26,
         '2023-Q4': 0,
@@ -51,8 +82,8 @@ def calculate_yearly_profits(df):
     # Add year column
     df['year'] = df['filled_time'].dt.year
 
-    # filtering out long_term for now
-    df = df[~df['category'].str.contains('long_term', na=False)]
+    # filtering out long_term and rsu for now
+    df = df[~df['category'].str.contains('long_term|rsu', na=False)]
     
     # Create dictionaries to track positions and profits
     positions = defaultdict(list)
@@ -241,6 +272,7 @@ def calculate_yearly_profits(df):
             quarterly_profits[quarter] += dividends
             yearly_profits[year] += dividends
             yearly_divs[year] += dividends
+        
     
     # Get cumulative deposits for a specific quarter
     def get_cumulative_deposits(year, quarter_num):
@@ -320,6 +352,22 @@ def calculate_yearly_profits(df):
             else:
                 annualized_return = 0
                 
+            # Calculate metrics with proper division by zero protection
+            total_trades = yearly_trade_counts[year]
+            win_rate = round((yearly_winning_trades[year] / total_trades * 100), 2) if total_trades > 0 else 0
+            avg_trade_duration = round(sum(t['duration'] for t in year_trades) / len(year_trades), 1) if year_trades else 0
+            avg_profit_per_trade = round(yearly_profits[year] / total_trades, 2) if total_trades > 0 else 0
+            avg_position_size = round(yearly_position_value[year] / total_trades, 2) if total_trades > 0 else 0
+            avg_return_pct = round(sum(t['return_pct'] for t in year_trades) / len(year_trades), 2) if year_trades else 0
+            
+            # Calculate position weighted return only if there are trades and position value
+            position_weighted_return = 0
+            if year_trades and yearly_position_value[year] > 0:
+                position_weighted_return = round(
+                    sum(t['return_pct'] * (t['position_size'] / yearly_position_value[year]) for t in year_trades), 
+                    2
+                )
+            
             yearly_metrics[year] = {
                 'total_profit': yearly_profits[year],
                 'total_fees': yearly_fees[year],
@@ -327,16 +375,13 @@ def calculate_yearly_profits(df):
                 'total_options': yearly_options[year],
                 'total_deposits': total_deposits,
                 'annualized_return': round(annualized_return, 2),
-                'total_trades': yearly_trade_counts[year],
-                'win_rate': round((yearly_winning_trades[year] / yearly_trade_counts[year] * 100), 2),
-                'avg_trade_duration': round(sum(t['duration'] for t in year_trades) / len(year_trades), 1),
-                'avg_profit_per_trade': round(yearly_profits[year] / yearly_trade_counts[year], 2),
-                'avg_position_size': round(yearly_position_value[year] / yearly_trade_counts[year], 2),
-                'avg_return_pct': round(sum(t['return_pct'] for t in year_trades) / len(year_trades), 2),
-                'position_weighted_return': round(
-                    sum(t['return_pct'] * (t['position_size'] / yearly_position_value[year]) for t in year_trades), 
-                    2
-                )
+                'total_trades': total_trades,
+                'win_rate': win_rate,
+                'avg_trade_duration': avg_trade_duration,
+                'avg_profit_per_trade': avg_profit_per_trade,
+                'avg_position_size': avg_position_size,
+                'avg_return_pct': avg_return_pct,
+                'position_weighted_return': position_weighted_return
             }
             
             # Calculate win/loss specific metrics
@@ -370,15 +415,14 @@ def calculate_yearly_profits(df):
 # Connect to database and get data
 try:
     logging.info('Starting summary update')
-    conn = sqlite3.connect('/home/rafikee/dev/souptrader/data/souptrader.db')
+    conn = sqlite3.connect(os.path.join(PROJECT_ROOT, 'data', 'souptrader.db'))
     df = pd.read_sql_query("SELECT * FROM trades", conn)
     conn.close()
-
     monthly_summary, yearly_metrics, quarterly_metrics, all_trades, all_dividends, all_options, yearly_stock_pnl = calculate_yearly_profits(df)
     logging.info('Calculated yearly profits and metrics')
 
     # connect to database for updating tables
-    conn = sqlite3.connect('/home/rafikee/dev/souptrader/data/souptrader.db')
+    conn = sqlite3.connect(os.path.join(PROJECT_ROOT, 'data', 'souptrader.db'))
     cursor = conn.cursor()
 
     # populate monthly_summary

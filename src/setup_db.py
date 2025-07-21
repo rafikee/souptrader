@@ -1,8 +1,12 @@
 import sqlite3
 import logging
+import os
+
+# Get the project root directory
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 logging.basicConfig(
-    filename='/home/rafikee/dev/souptrader/logs/setup.log',
+    filename=os.path.join(PROJECT_ROOT, 'logs', 'setup.log'),
     level=logging.INFO,
     format='%(asctime)s - %(message)s'
 )
@@ -10,7 +14,9 @@ logging.basicConfig(
 def create_tables():
     try:
         logging.info('Starting database setup')
-        conn = sqlite3.connect('/home/rafikee/dev/souptrader/data/souptrader.db')
+        # Connect to SQLite database using relative path
+        db_path = os.path.join(PROJECT_ROOT, 'data', 'souptrader.db')
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
         # Create trades table
