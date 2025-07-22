@@ -8,7 +8,7 @@ df = pd.read_csv('uploadme.csv')
 conn = sqlite3.connect('souptrader.db')
 
 # Append data to 'trades' table
-df.to_sql('trades', conn, if_exists='append', index=False)
+df.to_sql('funds', conn, if_exists='append', index=False)
 
 # Close connection
 conn.close()

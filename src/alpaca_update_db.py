@@ -157,19 +157,41 @@ try:
     # list of ids from alpaca
     id_list = df['id'].tolist()
 
-    # compare the two lists of ids
-    missing_ids = set(id_list) - set(funds_ids_db)
+    # Get ALL existing fund IDs
+    funds_ids_db = pd.read_sql_query("""
+        SELECT id FROM funds 
+        """, conn)['id'].tolist()
+    # Get ALL existing swings_funding IDs
+    swings_funding_ids_db = pd.read_sql_query("""
+        SELECT id FROM swings_funding
+        """, conn)['id'].tolist()
 
-    # now filter to the rows we need to add
-    df = df[df['id'].isin(missing_ids)]
+    # Only process rows whose IDs are not already present in either table
+    missing_ids_funds = set(id_list) - set(funds_ids_db)
+    missing_ids_swings = set(id_list) - set(swings_funding_ids_db)
+
+    # For funds table
+    df_funds_to_add = df[df['id'].isin(missing_ids_funds)]
+    # For swings_funding table
+    df_swings_to_add = df[df['id'].isin(missing_ids_swings)]
 
     cols = ['id', 'activity_type', 'net_amount', 'date']
-    df = df[cols]
-    df['net_amount'] = pd.to_numeric(df['net_amount'])
-    df['net_amount'] = df['net_amount'].abs()
-    df['platform'] = 'alpaca'
+    df_funds_to_add = df_funds_to_add[cols]
+    df_funds_to_add['net_amount'] = pd.to_numeric(df_funds_to_add['net_amount'])
+    df_funds_to_add['net_amount'] = df_funds_to_add['net_amount'].abs()
+    df_funds_to_add['platform'] = 'alpaca'
 
-    df_funds = df.rename(columns={
+    df_funds = df_funds_to_add.rename(columns={
+        'activity_type': 'type',
+        'net_amount': 'amount',
+    })
+
+    # For swings_funding
+    df_swings_to_add = df_swings_to_add[cols]
+    df_swings_to_add['net_amount'] = pd.to_numeric(df_swings_to_add['net_amount'])
+    df_swings_to_add['net_amount'] = df_swings_to_add['net_amount'].abs()
+    df_swings_to_add['platform'] = 'alpaca'
+    df_funds_swings = df_swings_to_add.rename(columns={
         'activity_type': 'type',
         'net_amount': 'amount',
     })
@@ -185,8 +207,49 @@ try:
     if not df_funds.empty:
         df_funds.to_sql('funds', conn, if_exists='append', index=False)
         logging.info(f'Added {len(df_funds)} new fund entries')
+        # Also update swings_funding table
+        df_funds_swings = df_funds.copy()
+        df_funds_swings['flow'] = df_funds_swings['type'].apply(lambda x: 'in' if x == 'CSD' else 'out')
+        df_funds_swings = df_funds_swings[['id', 'flow', 'date', 'amount', 'platform']]
+        # Get ALL existing swings_funding IDs
+        swings_funding_ids_db = pd.read_sql_query("""
+            SELECT id FROM swings_funding
+            """, conn)['id'].tolist()
+        # Only add rows whose IDs are not already present
+        missing_swings_ids = set(df_funds_swings['id']) - set(swings_funding_ids_db)
+        df_funds_swings_to_add = df_funds_swings[df_funds_swings['id'].isin(missing_swings_ids)]
+        if not df_funds_swings_to_add.empty:
+            df_funds_swings_to_add.to_sql('swings_funding', conn, if_exists='append', index=False)
+            logging.info(f'Added {len(df_funds_swings_to_add)} new swings_funding entries')
+        else:
+            logging.info('No new swings_funding entries to add')
     else:
         logging.info('No new fund entries to add')
+
+    # Get ALL existing swings_funding IDs
+    swings_funding_ids_db = pd.read_sql_query("""
+        SELECT id FROM swings_funding
+        """, conn)['id'].tolist()
+
+    # Only add rows whose IDs are not already present in swings_funding
+    missing_swings_ids = set(df['id'].tolist()) - set(swings_funding_ids_db)
+    df_swings_to_add = df[df['id'].isin(missing_swings_ids)]
+
+    if not df_swings_to_add.empty:
+        df_swings_to_add = df_swings_to_add[['id', 'activity_type', 'net_amount', 'date']]
+        df_swings_to_add['net_amount'] = pd.to_numeric(df_swings_to_add['net_amount'])
+        df_swings_to_add['net_amount'] = df_swings_to_add['net_amount'].abs()
+        df_swings_to_add['platform'] = 'alpaca'
+        df_swings_to_add = df_swings_to_add.rename(columns={
+            'activity_type': 'type',
+            'net_amount': 'amount',
+        })
+        df_swings_to_add['flow'] = df_swings_to_add['type'].apply(lambda x: 'in' if x == 'CSD' else 'out')
+        df_swings_to_add = df_swings_to_add[['id', 'flow', 'date', 'amount', 'platform']]
+        df_swings_to_add.to_sql('swings_funding', conn, if_exists='append', index=False)
+        logging.info(f'Added {len(df_swings_to_add)} new swings_funding entries')
+    else:
+        logging.info('No new swings_funding entries to add')
 
     conn.close()
     logging.info('Alpaca DB update completed successfully')
