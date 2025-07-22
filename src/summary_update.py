@@ -18,62 +18,10 @@ logging.basicConfig(
 def calculate_yearly_profits(df):
     """
     Calculate realized profits and returns per year from trading data.
-    Uses hard-coded deposit amounts for each year.
     
     Returns:
         Tuple of (profit_df, yearly_metrics, quarterly_metrics, all_trades)
     """
-    # Hard-coded quarterly deposits
-    QUARTERLY_DEPOSITS = {
-        '2014-Q1': 100, # placeholder
-        '2014-Q2': 100, # placeholder
-        '2014-Q3': 100, # placeholder
-        '2014-Q4': 100, # placeholder
-        '2015-Q1': 100, # placeholder
-        '2015-Q2': 100, # placeholder
-        '2015-Q3': 100, # placeholder
-        '2015-Q4': 100, # placeholder
-        '2016-Q1': 100, # placeholder
-        '2016-Q2': 100, # placeholder
-        '2016-Q3': 100, # placeholder
-        '2016-Q4': 100, # placeholder
-        '2017-Q1': 100, # placeholder
-        '2017-Q2': 100, # placeholder
-        '2017-Q3': 100, # placeholder
-        '2017-Q4': 100, # placeholder
-        '2018-Q1': 100, # placeholder
-        '2018-Q2': 100, # placeholder
-        '2018-Q3': 100, # placeholder
-        '2018-Q4': 100, # placeholder
-        '2019-Q1': 100, # placeholder
-        '2019-Q2': 100, # placeholder
-        '2019-Q3': 100, # placeholder
-        '2019-Q4': 100, # placeholder
-        '2020-Q1': 26_000,
-        '2020-Q2': -17_500, # adding new deposits but removing amount invested in SPUS and QQQ
-        '2020-Q3': -2_500,
-        '2020-Q4': 0, # 5k withdrawn at end of year but didn't include since we traded with it
-        '2021-Q1': 19_000,
-        '2021-Q2': 100, # placeholder
-        '2021-Q3': 100, # placeholder
-        '2021-Q4': 100, # placeholder
-        '2022-Q1': 100, # placeholder
-        '2022-Q2': 100, # placeholder
-        '2022-Q3': 100, # placeholder
-        '2022-Q4': 100, # placeholder
-        '2023-Q1': 100,
-        '2023-Q2': 0,
-        '2023-Q3': 5_359.26,
-        '2023-Q4': 0,
-        '2024-Q1': 25_400,
-        '2024-Q2': 0,
-        '2024-Q3': 10_000,
-        '2024-Q4': 30_000,
-        '2025-Q1': 84_000, # made 8848 in profit 2024, we'll round up to 9 so 65 + 9 (74K) then I added 10k for 2025
-        '2025-Q2': 8_726, # withdrew 6274 and then added 15000
-        '2025-Q3': 0,
-        '2025-Q4': 0,
-    }
     
     # Strip time down to just the date
     df['filled_time'] = df['filled_time'].str[:10]
@@ -274,107 +222,38 @@ def calculate_yearly_profits(df):
             yearly_divs[year] += dividends
         
     
-    # Get cumulative deposits for a specific quarter
-    def get_cumulative_deposits(year, quarter_num):
-        total = 0
-        for q in range(1, quarter_num + 1):
-            quarter_key = f"{year}-Q{q}"
-            total += QUARTERLY_DEPOSITS.get(quarter_key, 0)
-        return total
+    # Remove QUARTERLY_DEPOSITS and get_cumulative_deposits
+    # Remove all code that uses total_deposits or annualized_return
+    # Only calculate and update realized profit and trading metrics
 
-    # Calculate quarterly metrics
+    # Calculate quarterly metrics (profit only)
     for quarter in sorted(quarterly_profits.keys()):
-        year = int(quarter.split('-')[0])
-        q_num = int(quarter.split('Q')[1])
-        
-        # Filter trades for this quarter
-        quarter_start = pd.Timestamp(f"{year}-{(q_num-1)*3 + 1}-01")
-        quarter_end = pd.Timestamp(f"{year}-{q_num*3}-01") + pd.offsets.MonthEnd(1)
-        quarter_df = df[(df['filled_time'] >= quarter_start) & (df['filled_time'] <= quarter_end)]
-        
-        if not quarter_df.empty:
-            current_year = datetime.now().year
-            current_quarter = (datetime.now().month - 1) // 3 + 1
-            
-            # Get cumulative deposits up to this quarter
-            total_deposits = get_cumulative_deposits(year, q_num)
-            
-            if total_deposits > 0:
-                # If it's a past quarter or year, use simple quarterly return * 4
-                if year < current_year or (year == current_year and q_num < current_quarter):
-                    quarterly_return = quarterly_profits[quarter] / total_deposits
-                    annualized_return = quarterly_return * 4 * 100  # multiply by 4 to annualize
-                else:
-                    # For current quarter, scale up based on days elapsed
-                    today = datetime.now()
-                    days_in_quarter = (quarter_end - quarter_start).days + 1
-                    days_elapsed = (today - quarter_start).days + 1
-                    
-                    # Scale up the profit to full quarter, then to full year
-                    projected_quarter_profit = (quarterly_profits[quarter] / days_elapsed) * days_in_quarter
-                    projected_annual_profit = projected_quarter_profit * 4
-                    annualized_return = (projected_annual_profit / total_deposits) * 100
-            else:
-                annualized_return = 0
-            
-            quarterly_metrics[quarter] = {
-                'total_profit': quarterly_profits[quarter],
-                'annualized_return': round(annualized_return, 2),
-                'cumulative_deposits': total_deposits
-            }
+        quarterly_metrics[quarter] = {
+            'total_profit': quarterly_profits[quarter],
+        }
 
-    # Calculate yearly metrics including annualized returns
+    # Calculate yearly metrics (no annualized return or deposits)
     for year in sorted(yearly_profits.keys()):
         year_trades = yearly_trades[year]
-        
-        # Filter trades for this year
         year_df = df[df['year'] == year]
-        
         if not year_df.empty:
-            current_year = datetime.now().year
-            
-            # Calculate year's total deposits
-            total_deposits = get_cumulative_deposits(year, 4)
-            
-            if total_deposits > 0:
-                if year < current_year:
-                    # Past years - simple return
-                    annualized_return = (yearly_profits[year] / total_deposits) * 100
-                else:
-                    # Current year - scale up the return based on days elapsed
-                    today = datetime.now()
-                    start_of_year = datetime(year, 1, 1)
-                    days_elapsed = (today - start_of_year).days + 1
-                    
-                    # Scale up the profit to full year
-                    projected_yearly_profit = (yearly_profits[year] / days_elapsed) * 365
-                    annualized_return = (projected_yearly_profit / total_deposits) * 100
-            else:
-                annualized_return = 0
-                
-            # Calculate metrics with proper division by zero protection
             total_trades = yearly_trade_counts[year]
             win_rate = round((yearly_winning_trades[year] / total_trades * 100), 2) if total_trades > 0 else 0
             avg_trade_duration = round(sum(t['duration'] for t in year_trades) / len(year_trades), 1) if year_trades else 0
             avg_profit_per_trade = round(yearly_profits[year] / total_trades, 2) if total_trades > 0 else 0
             avg_position_size = round(yearly_position_value[year] / total_trades, 2) if total_trades > 0 else 0
             avg_return_pct = round(sum(t['return_pct'] for t in year_trades) / len(year_trades), 2) if year_trades else 0
-            
-            # Calculate position weighted return only if there are trades and position value
             position_weighted_return = 0
             if year_trades and yearly_position_value[year] > 0:
                 position_weighted_return = round(
                     sum(t['return_pct'] * (t['position_size'] / yearly_position_value[year]) for t in year_trades), 
                     2
                 )
-            
             yearly_metrics[year] = {
                 'total_profit': yearly_profits[year],
                 'total_fees': yearly_fees[year],
                 'total_divs': yearly_divs[year],
                 'total_options': yearly_options[year],
-                'total_deposits': total_deposits,
-                'annualized_return': round(annualized_return, 2),
                 'total_trades': total_trades,
                 'win_rate': win_rate,
                 'avg_trade_duration': avg_trade_duration,
@@ -383,23 +262,19 @@ def calculate_yearly_profits(df):
                 'avg_return_pct': avg_return_pct,
                 'position_weighted_return': position_weighted_return
             }
-            
-            # Calculate win/loss specific metrics
             winning_trades = [t for t in year_trades if t['profit'] > 0]
             losing_trades = [t for t in year_trades if t['profit'] <= 0]
-            
             if winning_trades:
                 yearly_metrics[year].update({
                     'avg_winning_position_size': round(sum(t['position_size'] for t in winning_trades) / len(winning_trades), 2),
                     'avg_winning_return_pct': round(sum(t['return_pct'] for t in winning_trades) / len(winning_trades), 2)
                 })
-            
             if losing_trades:
                 yearly_metrics[year].update({
                     'avg_losing_position_size': round(sum(t['position_size'] for t in losing_trades) / len(losing_trades), 2),
                     'avg_losing_return_pct': round(sum(t['return_pct'] for t in losing_trades) / len(losing_trades), 2)
                 })
-    
+
     # Convert monthly profits to DataFrame
     profit_df = pd.DataFrame([
         {'Month': month, 'Profit': profit}
@@ -440,17 +315,13 @@ try:
     for quarter, metrics in quarterly_metrics.items():
         cursor.execute('''
             INSERT INTO quarterly_summary (
-                quarter, realized_profit, cumulative_deposits, annualized_return
-            ) VALUES (?, ?, ?, ?)
+                quarter, realized_profit
+            ) VALUES (?, ?)
             ON CONFLICT(quarter) DO UPDATE SET
-                realized_profit = excluded.realized_profit,
-                cumulative_deposits = excluded.cumulative_deposits,
-                annualized_return = excluded.annualized_return
+                realized_profit = excluded.realized_profit
         ''', (
             quarter,
-            round(metrics['total_profit'], 2),
-            round(metrics['cumulative_deposits'], 2),
-            round(metrics['annualized_return'], 2)
+            round(metrics['total_profit'], 2)
         ))
     logging.info('Updated quarterly summary table')
 
@@ -463,8 +334,6 @@ try:
                 total_fees,
                 total_dividends,
                 options_profit,
-                total_deposits,
-                annualized_return,
                 total_trades_closed,
                 win_rate,
                 avg_trade_duration,
@@ -476,14 +345,12 @@ try:
                 avg_winning_return_pct,
                 avg_losing_position_size,
                 avg_losing_return_pct
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(year) DO UPDATE SET
                 realized_profit = excluded.realized_profit,
                 total_fees = excluded.total_fees,
                 total_dividends = excluded.total_dividends,
                 options_profit = excluded.options_profit,
-                total_deposits = excluded.total_deposits,
-                annualized_return = excluded.annualized_return,
                 total_trades_closed = excluded.total_trades_closed,
                 win_rate = excluded.win_rate,
                 avg_trade_duration = excluded.avg_trade_duration,
@@ -501,8 +368,6 @@ try:
             round(metrics.get('total_fees', 0), 2),
             round(metrics.get('total_divs', 0), 2),
             round(metrics.get('total_options', 0), 2),
-            round(metrics.get('total_deposits', 0), 2),
-            round(metrics.get('annualized_return', 0), 2),
             int(metrics.get('total_trades', 0)),
             round(metrics.get('win_rate', 0), 2),
             round(metrics.get('avg_trade_duration', 0), 2),

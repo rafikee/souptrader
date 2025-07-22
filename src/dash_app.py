@@ -3,6 +3,7 @@ from dash import html, dcc, dash_table
 import pandas as pd
 import sqlite3
 import os
+import numpy as np
 
 # Get the project root directory
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,20 +28,18 @@ def load_data():
     # Load quarterly data
     quarterly_df = pd.read_sql_query("SELECT * FROM quarterly_summary ORDER BY quarter DESC", conn)
     quarterly_df['Realized Profit'] = quarterly_df['realized_profit'].apply(lambda x: f"{x:,.2f}")
-    quarterly_df['Trading Capital'] = quarterly_df['cumulative_deposits'].apply(lambda x: f"{x:,.2f}")
-    quarterly_df['Annualized Return'] = quarterly_df['annualized_return'].apply(lambda x: f"{x:.2f}%")
     quarterly_df.rename(columns={'quarter': 'Quarter'}, inplace=True)
     
     # Load yearly data
     yearly_df = pd.read_sql_query("SELECT * FROM yearly_summary ORDER BY year DESC", conn)
     yearly_df['Realized Profit'] = yearly_df['realized_profit'].apply(lambda x: f"{x:,.2f}")
-    yearly_df['Trading Capital'] = yearly_df['total_deposits'].apply(lambda x: f"{x:,.2f}")
-    yearly_df['Annualized Return'] = yearly_df['annualized_return'].apply(lambda x: f"{x:.2f}%")
     yearly_df['Win Rate'] = yearly_df['win_rate'].apply(lambda x: f"{x:.2f}%")
     yearly_df['Avg Trade Duration'] = yearly_df['avg_trade_duration'].apply(lambda x: f"{x:.1f} days")
     yearly_df['Avg Position Size'] = yearly_df['avg_position_size'].apply(lambda x: f"{x:,.2f}")
     yearly_df['Avg Winning Return'] = yearly_df['avg_winning_return_pct'].apply(lambda x: f"{x:.2f}%")
     yearly_df['Avg Losing Return'] = yearly_df['avg_losing_return_pct'].apply(lambda x: f"{x:.2f}%")
+    yearly_df['Total Trades Closed'] = yearly_df['total_trades_closed']
+    yearly_df['Year'] = yearly_df['year']
     
     conn.close()
     return monthly_df, quarterly_df, yearly_df
@@ -60,19 +59,32 @@ def create_layout():
     quarterly_columns = [
         {"name": col, "id": col} 
         for col in quarterly_df.columns 
-        if col not in ['realized_profit', 'cumulative_deposits', 'annualized_return']
+        if col != 'realized_profit'
     ]
     
+    # List of formatted columns to keep in the yearly table
+    formatted_cols = [
+        'Year', 'Realized Profit', 'Total Trades Closed', 'Win Rate', 'Avg Trade Duration',
+        'Avg Position Size', 'Avg Winning Return', 'Avg Losing Return'
+    ]
+    # Drop all columns that are not in formatted_cols or 'realized_profit'
+    cols_to_keep = [col for col in yearly_df.columns if col in formatted_cols or col == 'realized_profit']
+    yearly_df = yearly_df[cols_to_keep]
+
+    # Move 'Year' and 'Realized Profit' to the first columns in yearly_df
+    cols = list(yearly_df.columns)
+    for col in ['Year', 'Realized Profit']:
+        if col in cols:
+            cols.remove(col)
+    cols = ['Year', 'Realized Profit'] + cols
+    yearly_df = yearly_df[cols]
+
     yearly_columns = [
-        {"name": col, "id": col} 
-        for col in yearly_df.columns 
-        if col not in ['realized_profit', 'total_fees', 'total_dividends', 'options_profit', 
-                      'total_deposits', 'annualized_return', 'total_trades_closed', 'win_rate',
-                      'avg_trade_duration', 'avg_profit_per_trade', 'avg_position_size',
-                      'simple_avg_return', 'position_weighted_return', 'avg_winning_position_size',
-                      'avg_winning_return_pct', 'avg_losing_position_size', 'avg_losing_return_pct']
+        {"name": col, "id": col}
+        for col in yearly_df.columns
+        if col != 'realized_profit'
     ]
-    
+
     return html.Div([
         html.H2("SoupTrader Dashboard", style={'textAlign': 'center', 'color': 'green'}),
         html.H3("Monthly Summary Table", style={'textAlign': 'center'}),
@@ -124,7 +136,7 @@ def create_layout():
             data=quarterly_df.to_dict("records"),
             style_table={
                 'overflowX': 'auto',
-                'maxWidth': '400px',  # Adjusted table width
+                'maxWidth': '200px',  # Adjusted table width
                 'margin': '0 auto',    # Center the table
                 'border': '1px solid black',  # Add border to table
                 'padding': '5px'     # Add horizontal padding
@@ -175,8 +187,8 @@ def create_layout():
             style_cell={
                 'textAlign': 'center',
                 'padding': '5px',      # Reduce cell padding
-                'minWidth': '50px',    # Set column width to 50px
-                'maxWidth': '50px',    # Set column width to 50px
+                'minWidth': '20px',    # Set column width to 50px
+                'maxWidth': '100px',    # Set column width to 50px
                 'whiteSpace': 'normal', # Allow text wrapping
                 'border': '1px solid black'  # Add border to cells
             },
