@@ -20,6 +20,7 @@ Pygments==2.19.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
 pytz==2025.2
+exchange-calendars==4.11.1
 requests==2.32.4
 retrying==1.4.0
 setuptools==80.9.0
