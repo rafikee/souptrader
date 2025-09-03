@@ -50,7 +50,7 @@ if not api_key or not secret_key:
 # =============================================================================
 
 # Trading parameters
-SYMBOL = "ASTS"                    # Stock symbol to backtest
+SYMBOL = "SMR"                    # Stock symbol to backtest
 POSITION_SIZE = 100000            # Target position size in dollars (never exceed)
 PROFIT_TARGET = 0.01              # 1% profit target
 STOP_LOSS = -0.0025                # -0.25% stop loss
@@ -477,10 +477,20 @@ def debug_gap_breakout(data_5min, current_index, vwap, rsi, data_1min):
                 break
         
         if day_start_index and day_start_index + 1 < current_index:
-            opening_range_high = max(data_5min.iloc[day_start_index]['high'], 
-                                   data_5min.iloc[day_start_index + 1]['high'])
-            breakout_ok = current_row['close'] > opening_range_high
-            logging.info(f"  Criterion 3 - Opening range breakout (high: ${opening_range_high:.2f}): {breakout_ok}")
+            first_candle = data_5min.iloc[day_start_index]
+            second_candle = data_5min.iloc[day_start_index + 1]
+            
+            # Check if both opening candles are green
+            both_green = (first_candle['close'] > first_candle['open'] and 
+                         second_candle['close'] > second_candle['open'])
+            logging.info(f"  Criterion 3a - Both opening candles green: {both_green}")
+            
+            if both_green:
+                opening_range_high = max(first_candle['high'], second_candle['high'])
+                breakout_ok = current_row['close'] > opening_range_high
+                logging.info(f"  Criterion 3b - Opening range breakout (high: ${opening_range_high:.2f}): {breakout_ok}")
+            else:
+                logging.info(f"  Criterion 3b - Opening range breakout: Skipped (not both green)")
         else:
             logging.info(f"  Criterion 3 - Opening range breakout: Not enough data")
         
@@ -564,9 +574,16 @@ def entry_signal_gap_breakout(data_5min, current_index, vwap, rsi, data_1min):
     if day_start_index is None or day_start_index + 1 >= current_index:
         return False
     
+    # Check that both opening range candles are green
+    first_candle = data_5min.iloc[day_start_index]
+    second_candle = data_5min.iloc[day_start_index + 1]
+    
+    if (first_candle['close'] <= first_candle['open'] or 
+        second_candle['close'] <= second_candle['open']):
+        return False  # One or both opening candles are red
+    
     # Opening range = first 2 candles of the day
-    opening_range_high = max(data_5min.iloc[day_start_index]['high'], 
-                           data_5min.iloc[day_start_index + 1]['high'])
+    opening_range_high = max(first_candle['high'], second_candle['high'])
     
     # Check if current price breaks above opening range high
     if current_row['close'] <= opening_range_high:
@@ -705,12 +722,18 @@ def calculate_position_size(price):
 
 def monitor_exit_1min(data_1min_all, entry_price, entry_time):
     """
-    Monitor 1-minute data for exit signals using pre-fetched data.
+    Monitor 1-minute data for exit signals using trailing stop loss.
     
     Exit conditions:
-    - 1% profit target
-    - -0.5% stop loss
+    - Trailing stop loss (0.25% below highest price reached)
     - Market close
+    - End of data
+    
+    Trailing stop logic:
+    - Start with initial stop loss (-0.25% from entry)
+    - When price reaches +0.25% profit, activate trailing stop
+    - Trailing stop = highest_price * 0.9975 (0.25% below peak)
+    - Check LOW first (conservative), then check HIGH for new peaks
     
     Args:
         data_1min_all (pd.DataFrame): All 1-minute OHLCV data
@@ -729,12 +752,16 @@ def monitor_exit_1min(data_1min_all, entry_price, entry_time):
     if data_1min.empty:
         return entry_price, entry_time, "No 1-minute data after entry"
     
-    profit_target_price = entry_price * (1 + PROFIT_TARGET)
-    stop_loss_price = entry_price * (1 + STOP_LOSS)
+    # Initialize trailing stop variables
+    initial_stop_loss = entry_price * (1 + STOP_LOSS)  # -0.25% from entry
+    trailing_stop = initial_stop_loss
+    current_peak = entry_price
+    trailing_activated = False
+    activation_threshold = entry_price * 1.0025  # +0.25% profit to activate trailing
     
     logging.info(f"    Monitoring exit from {entry_time} at ${entry_price:.2f}")
-    logging.info(f"    Profit target: {PROFIT_TARGET:.1%} (${profit_target_price:.2f})")
-    logging.info(f"    Stop loss: {STOP_LOSS:.1%} (${stop_loss_price:.2f})")
+    logging.info(f"    Initial stop loss: {STOP_LOSS:.1%} (${initial_stop_loss:.2f})")
+    logging.info(f"    Trailing activation: +0.25% (${activation_threshold:.2f})")
     
     for index, row in data_1min.iterrows():
         current_time = row['timestamp']
@@ -744,22 +771,35 @@ def monitor_exit_1min(data_1min_all, entry_price, entry_time):
         
         logging.info(f"    {current_time} - H:${high:.2f} L:${low:.2f} C:${close:.2f}")
         
-        # Check if we hit profit target (high touched target price)
-        if high >= profit_target_price:
-            logging.info(f"    PROFIT TARGET HIT! High ${high:.2f} >= Target ${profit_target_price:.2f}")
-            return profit_target_price, current_time, "Profit Target"
+        # Check trailing stop first (conservative approach)
+        if low <= trailing_stop:
+            logging.info(f"    TRAILING STOP HIT! Low ${low:.2f} <= Stop ${trailing_stop:.2f}")
+            return trailing_stop, current_time, "Trailing Stop"
         
-        # Check if we hit stop loss (low touched stop price)
-        if low <= stop_loss_price:
-            logging.info(f"    STOP LOSS HIT! Low ${low:.2f} <= Stop ${stop_loss_price:.2f}")
-            return stop_loss_price, current_time, "Stop Loss"
+        # Check for new peak and update trailing stop
+        if high > current_peak:
+            current_peak = high
+            
+            # Activate trailing stop when we reach +0.25% profit
+            if not trailing_activated and high >= activation_threshold:
+                trailing_activated = True
+                logging.info(f"    TRAILING STOP ACTIVATED at ${high:.2f} (+{((high/entry_price-1)*100):.2f}%)")
+            
+            # Update trailing stop if activated
+            if trailing_activated:
+                new_trailing_stop = high * 0.9975  # 0.25% below peak
+                if new_trailing_stop > trailing_stop:  # Only move up, never down
+                    trailing_stop = new_trailing_stop
+                    logging.info(f"    Trailing stop updated to ${trailing_stop:.2f} (peak: ${high:.2f})")
         
         # Check if it's market close using exchange calendar
         if not is_regular_trading_hours(current_time):
+            logging.info(f"    MARKET CLOSE - Exiting at ${close:.2f}")
             return close, current_time, "Market Close"
     
     # If we get here, exit at the last available price
     last_row = data_1min.iloc[-1]
+    logging.info(f"    END OF DATA - Exiting at ${last_row['close']:.2f}")
     return last_row['close'], last_row['timestamp'], "End of Data"
 
 # =============================================================================
