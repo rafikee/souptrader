@@ -90,7 +90,7 @@ def create_layout():
             data=monthly_df.to_dict("records"),
             style_table={
                 'overflowX': 'auto',
-                'maxWidth': '800px',  # Adjusted table width
+                'maxWidth': '200px',  # Adjusted table width
                 'margin': '0 auto',    # Center the table
                 'border': '1px solid black',  # Add border to table
                 'padding': '5px'     # Add horizontal padding
@@ -98,8 +98,8 @@ def create_layout():
             style_cell={
                 'textAlign': 'center',
                 'padding': '5px',      # Reduce cell padding
-                'minWidth': '20px',    # Set column width to 50px
-                'maxWidth': '100px',    # Set column width to 50px
+                'minWidth': '50px',    # Set column width to 50px
+                'maxWidth': '50px',    # Set column width to 50px
                 'whiteSpace': 'normal', # Allow text wrapping
                 'border': '1px solid black'  # Add border to cells
             },
@@ -133,7 +133,7 @@ def create_layout():
             data=quarterly_df.to_dict("records"),
             style_table={
                 'overflowX': 'auto',
-                'maxWidth': '800px',  # Adjusted table width
+                'maxWidth': '200px',  # Adjusted table width
                 'margin': '0 auto',    # Center the table
                 'border': '1px solid black',  # Add border to table
                 'padding': '5px'     # Add horizontal padding
@@ -141,8 +141,8 @@ def create_layout():
             style_cell={
                 'textAlign': 'center',
                 'padding': '5px',      # Reduce cell padding
-                'minWidth': '20px',    # Set column width to 50px
-                'maxWidth': '100px',    # Set column width to 50px
+                'minWidth': '50px',    # Set column width to 50px
+                'maxWidth': '50px',    # Set column width to 50px
                 'whiteSpace': 'normal', # Allow text wrapping
                 'border': '1px solid black'  # Add border to cells
             },
