@@ -3,6 +3,7 @@
 
 # Database
 *.db
+data/backtest_data/
 
 *.csv
 
