@@ -12,9 +12,10 @@ Usage:
 Notes:
 - Uses Databento Historical client (async with bounded concurrency).
 - Filters to regular trading hours using exchange_calendars (XNYS).
-- Overwrites existing files if present.
+- Skips existing files if present (idempotent).
 - Reads DATABENTO_API_KEY from environment (.env supported).
 - Timestamps are UTC.
+- Requires MY_API_KEY in environment (.env supported via python-dotenv).
 """
 
 import os
@@ -27,7 +28,7 @@ import warnings
 import time
 
 import pandas as pd
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 import exchange_calendars as xcals
 
 try:
@@ -55,6 +56,11 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Single stock symbol (e.g., SMR)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-download and overwrite existing day files",
+    )
     return parser.parse_args()
 
 
@@ -74,6 +80,19 @@ def daterange_days(start: pd.Timestamp, end: pd.Timestamp) -> List[pd.Timestamp]
 
 def get_client() -> Historical:
     load_dotenv()
+    # Require app-level API key and validate against .env
+    provided_key = os.getenv("MY_API_KEY")
+    if not provided_key:
+        print("ERROR: MY_API_KEY not provided. Set it in the environment.", file=sys.stderr)
+        sys.exit(1)
+    env_vals = dotenv_values()
+    expected_key = env_vals.get("MY_API_KEY")
+    if not expected_key:
+        print("ERROR: MY_API_KEY not set in .env on the server.", file=sys.stderr)
+        sys.exit(1)
+    if provided_key != expected_key:
+        print("ERROR: Invalid MY_API_KEY.", file=sys.stderr)
+        sys.exit(1)
     api_key = os.getenv("DATABENTO_API_KEY")
     if not api_key:
         print("ERROR: DATABENTO_API_KEY not found in environment (.env)")
@@ -101,9 +120,9 @@ async def fetch_day_to_parquet(client: Historical, symbol: str, day: pd.Timestam
     ensure_dir(out_dir)
     out_path = os.path.join(out_dir, f"{day.strftime('%Y-%m-%d')}.parquet")
 
-    # Overwrite policy: always overwrite
+    # Skip existing files to avoid re-downloading
     if os.path.exists(out_path):
-        os.remove(out_path)
+        return f"OK: Exists, skipping: {sym} {day.date()}", 0
 
     # Set start/end for the calendar day in UTC
     day_start = pd.Timestamp(day.strftime('%Y-%m-%d') + " 00:00:00", tz="UTC")
@@ -178,6 +197,13 @@ def main() -> None:
     client = get_client()
 
     days = daterange_days(start, end)
+
+    # Pre-scan: if all expected daily files exist for the date range, skip this symbol entirely
+    out_dir = os.path.join(DATA_ROOT, symbol, "nbbo1s")
+    expected_files = [os.path.join(out_dir, f"{d.strftime('%Y-%m-%d')}.parquet") for d in days]
+    if expected_files and all(os.path.exists(p) for p in expected_files) and not args.force:
+        print(f"All NBBO 1s daily files exist for {symbol}; skipping symbol.")
+        return
 
     # Progress tracking
     completed = 0
