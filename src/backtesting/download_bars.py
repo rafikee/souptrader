@@ -15,6 +15,7 @@ Notes:
 - Requires MY_API_KEY in environment (.env supported via python-dotenv).
 """
 
+import io
 import os
 import sys
 import argparse
@@ -70,24 +71,32 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def log_bars_output(symbol, force, output_lines):
-    """Log bars download output to file, replacing previous log."""
+def log_bars_output(symbol, force, output_lines, is_new_session=False):
+    """Log bars download output to file, appending to existing log."""
     os.makedirs(LOGS_DIR, exist_ok=True)
     log_file = os.path.join(LOGS_DIR, 'bars_download.log')
     
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    with open(log_file, 'w') as f:
-        f.write(f"Bars Download Log - {timestamp}\n")
+    # If new session, clear the file first
+    mode = 'w' if is_new_session else 'a'
+    
+    with open(log_file, mode) as f:
+        if is_new_session:
+            f.write("=" * 60 + "\n")
+            f.write("NEW DOWNLOAD SESSION STARTED\n")
+            f.write("=" * 60 + "\n\n")
+        
+        f.write(f"Bars Download - {timestamp}\n")
         f.write(f"Symbol: {symbol}\n")
         f.write(f"Force: {force}\n")
-        f.write("=" * 50 + "\n\n")
+        f.write("-" * 40 + "\n")
         
         for line in output_lines:
             f.write(line + "\n")
         
-        f.write("\n" + "=" * 50 + "\n")
-        f.write(f"Bars download completed at {timestamp}\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Completed at {timestamp}\n\n")
 
 
 def ensure_app_api_key() -> None:
@@ -205,6 +214,12 @@ def main() -> None:
         for timeframe in timeframes:
             timeframe_str = f"{timeframe.amount}{'Min' if timeframe.unit == TimeFrameUnit.Minute else timeframe.unit.value}"
             out_dir = os.path.join(DATA_ROOT, sym, timeframe_str)
+            
+            # Check if the timeframe subfolder exists
+            if not os.path.isdir(out_dir):
+                all_complete = False
+                break
+                
             expected_files = [os.path.join(out_dir, f"{m_start.strftime('%Y-%m')}.parquet") for m_start, _ in months]
             # If any expected file missing, this timeframe is incomplete
             if not all(os.path.exists(p) for p in expected_files):
@@ -232,10 +247,24 @@ def main() -> None:
                         output_lines.append(f"    Removed existing file: {file_name}")
                     except OSError:
                         pass
-                fetch_and_write_month(client, sym, timeframe, month_start, month_end)
+                
+                # Capture stdout from fetch_and_write_month and log immediately
+                old_stdout = sys.stdout
+                sys.stdout = captured_output = io.StringIO()
+                try:
+                    fetch_and_write_month(client, sym, timeframe, month_start, month_end)
+                    captured_text = captured_output.getvalue()
+                    if captured_text.strip():
+                        # Add each line of captured output with proper indentation
+                        for line in captured_text.strip().split('\n'):
+                            output_lines.append(f"    {line}")
+                        # Log immediately for real-time updates
+                        log_bars_output(sym, args.force, [f"    {line}" for line in captured_text.strip().split('\n')], is_new_session=False)
+                finally:
+                    sys.stdout = old_stdout
     
-    # Log the output
-    log_bars_output(','.join(symbols), args.force, output_lines)
+    # Log the output (always append, never start new session from command line)
+    log_bars_output(','.join(symbols), args.force, output_lines, is_new_session=False)
 
 
 if __name__ == "__main__":

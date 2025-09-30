@@ -5,6 +5,10 @@
 *.db
 data/backtest_data/
 
+# Download status
+logs/download_status.json
+src/backtesting/downloaded_tickers.json
+
 *.csv
 
 # Logs

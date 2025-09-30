@@ -18,6 +18,7 @@ Notes:
 - Requires MY_API_KEY in environment (.env supported via python-dotenv).
 """
 
+import io
 import os
 import sys
 import argparse
@@ -69,24 +70,32 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def log_nbbo_output(symbol, force, output_lines):
-    """Log NBBO download output to file, replacing previous log."""
+def log_nbbo_output(symbol, force, output_lines, is_new_session=False):
+    """Log NBBO download output to file, appending to existing log."""
     os.makedirs(LOGS_DIR, exist_ok=True)
     log_file = os.path.join(LOGS_DIR, 'nbbo_download.log')
     
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    with open(log_file, 'w') as f:
-        f.write(f"NBBO Download Log - {timestamp}\n")
+    # If new session, clear the file first
+    mode = 'w' if is_new_session else 'a'
+    
+    with open(log_file, mode) as f:
+        if is_new_session:
+            f.write("=" * 60 + "\n")
+            f.write("NEW DOWNLOAD SESSION STARTED\n")
+            f.write("=" * 60 + "\n\n")
+        
+        f.write(f"NBBO Download - {timestamp}\n")
         f.write(f"Symbol: {symbol}\n")
         f.write(f"Force: {force}\n")
-        f.write("=" * 50 + "\n\n")
+        f.write("-" * 40 + "\n")
         
         for line in output_lines:
             f.write(line + "\n")
         
-        f.write("\n" + "=" * 50 + "\n")
-        f.write(f"NBBO download completed at {timestamp}\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Completed at {timestamp}\n\n")
 
 
 def daterange_days(start: pd.Timestamp, end: pd.Timestamp) -> List[pd.Timestamp]:
@@ -97,6 +106,14 @@ def daterange_days(start: pd.Timestamp, end: pd.Timestamp) -> List[pd.Timestamp]
         days.append(current)
         current = current + pd.Timedelta(days=1)
     return days
+
+
+def trading_days(start: pd.Timestamp, end: pd.Timestamp):
+    """Get trading days using exchange calendar sessions."""
+    # Use exchange calendar sessions (dates are session labels)
+    sessions = XNYS.sessions_in_range(start.tz_localize(None), end.tz_localize(None))
+    # Convert session labels to UTC midnight timestamps for filename formatting
+    return [pd.Timestamp(s).tz_localize('UTC') for s in sessions]
 
 
 def get_client() -> Historical:
@@ -219,23 +236,33 @@ def main() -> None:
 
     days = daterange_days(start, end)
     
+    # Use trading days for progress calculation (more accurate percentages)
+    trading_days_list = trading_days(start, end)
+    
     # Capture output for logging
     output_lines = []
     output_lines.append(f"Starting NBBO download for symbol: {symbol}")
     output_lines.append(f"Force mode: {args.force}")
     output_lines.append(f"Date range: {START_DATE_STR} to {END_DATE_STR}")
-    output_lines.append(f"Total days to process: {len(days)}")
+    output_lines.append(f"Total calendar days: {len(days)}")
+    output_lines.append(f"Trading days for progress: {len(trading_days_list)}")
     output_lines.append("")
 
     # Pre-scan: if all expected daily files exist for the date range, skip this symbol entirely
     out_dir = os.path.join(DATA_ROOT, symbol, "nbbo1s")
-    expected_files = [os.path.join(out_dir, f"{d.strftime('%Y-%m-%d')}.parquet") for d in days]
-    if expected_files and all(os.path.exists(p) for p in expected_files) and not args.force:
-        msg = f"All NBBO 1s daily files exist for {symbol}; skipping symbol."
-        print(msg)
-        output_lines.append(msg)
-        log_nbbo_output(symbol, args.force, output_lines)
-        return
+    
+    # Check if the nbbo1s subfolder exists
+    if not os.path.isdir(out_dir):
+        # Subfolder doesn't exist, need to download
+        pass
+    else:
+        expected_files = [os.path.join(out_dir, f"{d.strftime('%Y-%m-%d')}.parquet") for d in days]
+        if expected_files and all(os.path.exists(p) for p in expected_files) and not args.force:
+            msg = f"All NBBO 1s daily files exist for {symbol}; skipping symbol."
+            print(msg)
+            output_lines.append(msg)
+            log_nbbo_output(symbol, args.force, output_lines)
+            return
 
     # Progress tracking
     completed = 0
@@ -248,11 +275,16 @@ def main() -> None:
         total_rows += rows
         elapsed = time.time() - start_time
         rate = completed / elapsed if elapsed > 0 else 0
-        eta = (len(days) - completed) / rate if rate > 0 else 0
+        # Use trading days for accurate percentage calculation
+        total_trading_days = len(trading_days_list)
+        eta = (total_trading_days - completed) / rate if rate > 0 else 0
         
-        progress_msg = f"Progress: {completed}/{len(days)} ({completed/len(days)*100:.1f}%) | {total_rows:,} rows | {rate:.1f} days/sec | ETA: {eta/60:.1f}min"
+        progress_msg = f"Progress: {completed}/{total_trading_days} ({completed/total_trading_days*100:.1f}%) | {total_rows:,} rows | {rate:.1f} days/sec | ETA: {eta/60:.1f}min"
         print(f"\r{progress_msg}", end="", flush=True)
         output_lines.append(progress_msg)
+        
+        # Log immediately for real-time updates
+        log_nbbo_output(symbol, args.force, [progress_msg], is_new_session=False)
 
     async def runner():
         sem = asyncio.Semaphore(6)  # bounded concurrency
@@ -264,7 +296,7 @@ def main() -> None:
         errors = [msg for msg, rows in results if msg.startswith("ERROR:")]
         no_data = [msg for msg, rows in results if msg.startswith("No data:")]
         
-        summary_msg = f"Completed: {ok_count}/{len(days)} days, {total_rows:,} total rows"
+        summary_msg = f"Completed: {ok_count}/{len(days)} calendar days ({ok_count}/{len(trading_days_list)} trading days), {total_rows:,} total rows"
         print(f"\n\n{summary_msg}")
         output_lines.append("")
         output_lines.append(summary_msg)
@@ -278,10 +310,22 @@ def main() -> None:
             print(no_data_msg)
             output_lines.append(no_data_msg)
 
-    asyncio.run(runner())
+    # Capture stdout from the async runner
+    old_stdout = sys.stdout
+    sys.stdout = captured_output = io.StringIO()
+    try:
+        asyncio.run(runner())
+        captured_text = captured_output.getvalue()
+        if captured_text.strip():
+            # Add each line of captured output
+            for line in captured_text.strip().split('\n'):
+                if line.strip():  # Only add non-empty lines
+                    output_lines.append(line)
+    finally:
+        sys.stdout = old_stdout
     
-    # Log the output
-    log_nbbo_output(symbol, args.force, output_lines)
+    # Log the output (always append, never start new session from command line)
+    log_nbbo_output(symbol, args.force, output_lines, is_new_session=False)
 
 
 if __name__ == "__main__":
