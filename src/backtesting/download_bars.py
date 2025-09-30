@@ -31,6 +31,7 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 # Get project root (3 levels up from src/backtesting/)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 DATA_ROOT = os.path.join(PROJECT_ROOT, 'data', 'backtest_data')
+LOGS_DIR = os.path.join(PROJECT_ROOT, 'logs')
 START_DATE_STR = "2024-09-01"
 END_DATE_STR = "2025-08-31"
 
@@ -67,6 +68,26 @@ def month_range(start: pd.Timestamp, end: pd.Timestamp) -> List[Tuple[pd.Timesta
 
 def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
+
+
+def log_bars_output(symbol, force, output_lines):
+    """Log bars download output to file, replacing previous log."""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    log_file = os.path.join(LOGS_DIR, 'bars_download.log')
+    
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    with open(log_file, 'w') as f:
+        f.write(f"Bars Download Log - {timestamp}\n")
+        f.write(f"Symbol: {symbol}\n")
+        f.write(f"Force: {force}\n")
+        f.write("=" * 50 + "\n\n")
+        
+        for line in output_lines:
+            f.write(line + "\n")
+        
+        f.write("\n" + "=" * 50 + "\n")
+        f.write(f"Bars download completed at {timestamp}\n")
 
 
 def ensure_app_api_key() -> None:
@@ -167,9 +188,18 @@ def main() -> None:
     ]
 
     months = month_range(start, end)
+    
+    # Capture output for logging
+    output_lines = []
+    output_lines.append(f"Starting bars download for symbols: {', '.join(symbols)}")
+    output_lines.append(f"Force mode: {args.force}")
+    output_lines.append(f"Date range: {START_DATE_STR} to {END_DATE_STR}")
+    output_lines.append("")
 
     for symbol in symbols:
         sym = symbol.upper()
+        output_lines.append(f"Processing symbol: {sym}")
+        
         # Pre-scan: if all expected monthly files exist for all timeframes, skip this symbol entirely
         all_complete = True
         for timeframe in timeframes:
@@ -182,10 +212,15 @@ def main() -> None:
                 break
 
         if all_complete and not args.force:
-            print(f"All monthly bars exist for {sym} across all timeframes; skipping symbol.")
+            msg = f"All monthly bars exist for {sym} across all timeframes; skipping symbol."
+            print(msg)
+            output_lines.append(msg)
             continue
 
         for timeframe in timeframes:
+            timeframe_str = f"{timeframe.amount}{'Min' if timeframe.unit == TimeFrameUnit.Minute else timeframe.unit.value}"
+            output_lines.append(f"  Processing timeframe: {timeframe_str}")
+            
             for month_start, month_end in months:
                 timeframe_str = f"{timeframe.amount}{'Min' if timeframe.unit == TimeFrameUnit.Minute else timeframe.unit.value}"
                 out_dir = os.path.join(DATA_ROOT, sym, timeframe_str)
@@ -194,9 +229,13 @@ def main() -> None:
                 if os.path.exists(out_path) and args.force:
                     try:
                         os.remove(out_path)
+                        output_lines.append(f"    Removed existing file: {file_name}")
                     except OSError:
                         pass
                 fetch_and_write_month(client, sym, timeframe, month_start, month_end)
+    
+    # Log the output
+    log_bars_output(','.join(symbols), args.force, output_lines)
 
 
 if __name__ == "__main__":

@@ -6,10 +6,16 @@ import sys
 import subprocess
 import pandas as pd
 import exchange_calendars as xcals
+from datetime import datetime, timezone
+import threading
+import json
+import time
 
 # Paths and constants
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_ROOT = os.path.join(PROJECT_ROOT, 'data', 'backtest_data')
+LOGS_DIR = os.path.join(PROJECT_ROOT, 'logs')
+TICKERS_JSON = os.path.join(PROJECT_ROOT, 'src', 'backtesting', 'downloaded_tickers.json')
 
 # Match downloader date ranges
 START_DATE_STR = "2024-09-01"
@@ -72,17 +78,78 @@ def is_symbol_complete(symbol: str) -> bool:
     return True
 
 
-def list_complete_symbols():
+def load_downloaded_tickers():
+    """Load downloaded tickers from JSON file."""
+    if not os.path.exists(TICKERS_JSON):
+        return [], []
+    try:
+        with open(TICKERS_JSON, 'r') as f:
+            data = json.load(f)
+            return data.get('downloaded', []), data.get('incomplete', [])
+    except:
+        return [], []
+
+
+def save_downloaded_tickers(complete_tickers, incomplete_tickers=None):
+    """Save downloaded tickers to JSON file."""
+    os.makedirs(os.path.dirname(TICKERS_JSON), exist_ok=True)
+    
+    # If incomplete_tickers not provided, load existing incomplete ones
+    if incomplete_tickers is None:
+        _, incomplete_tickers = load_downloaded_tickers()
+    
+    data = {
+        'downloaded': sorted(complete_tickers),
+        'incomplete': sorted(incomplete_tickers),
+        'last_updated': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    }
+    with open(TICKERS_JSON, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def validate_all_tickers():
+    """Validate all tickers in data directory and update JSON."""
     if not os.path.isdir(DATA_ROOT):
-        return []
+        return [], []
+    
     symbols = [d for d in os.listdir(DATA_ROOT) if os.path.isdir(os.path.join(DATA_ROOT, d))]
-    complete = [s for s in sorted(symbols) if is_symbol_complete(s)]
-    return complete
+    complete = []
+    incomplete = []
+    
+    for symbol in sorted(symbols):
+        if is_symbol_complete(symbol):
+            complete.append(symbol)
+        else:
+            incomplete.append(symbol)
+    
+    # Update JSON with both complete and incomplete tickers
+    save_downloaded_tickers(complete, incomplete)
+    return complete, incomplete
 
 
-def render_complete_list(symbols):
+def add_downloaded_ticker(symbol):
+    """Add a newly downloaded ticker to the JSON if it's complete."""
+    current_complete, current_incomplete = load_downloaded_tickers()
+    
+    if is_symbol_complete(symbol):
+        # Move from incomplete to complete if it was there
+        if symbol in current_incomplete:
+            current_incomplete.remove(symbol)
+        if symbol not in current_complete:
+            current_complete.append(symbol)
+        save_downloaded_tickers(current_complete, current_incomplete)
+        return True
+    else:
+        # Add to incomplete if not already there
+        if symbol not in current_incomplete and symbol not in current_complete:
+            current_incomplete.append(symbol)
+            save_downloaded_tickers(current_complete, current_incomplete)
+        return False
+
+
+def render_ticker_list(symbols, empty_text="None yet"):
     if not symbols:
-        return html.P("None yet", style={'textAlign': 'center', 'color': '#7f8c8d'})
+        return html.P(empty_text, style={'textAlign': 'center', 'color': '#7f8c8d'})
     return html.Div([
         html.Span(sym, style={
             'display': 'inline-block',
@@ -95,8 +162,83 @@ def render_complete_list(symbols):
     ], style={'display': 'flex', 'flexWrap': 'wrap', 'justifyContent': 'center'})
 
 
+
+
+def update_download_status(status, symbol=None, error=None):
+    """Update the download status file."""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    status_file = os.path.join(LOGS_DIR, 'download_status.json')
+    
+    status_data = {
+        "status": status,
+        "symbol": symbol,
+        "start_time": datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC'),
+        "error": error
+    }
+    
+    with open(status_file, 'w') as f:
+        json.dump(status_data, f, indent=2)
+
+
+def get_download_status():
+    """Get current download status from file."""
+    status_file = os.path.join(LOGS_DIR, 'download_status.json')
+    if not os.path.exists(status_file):
+        return {"status": "idle", "symbol": None, "start_time": None, "error": None}
+    
+    try:
+        with open(status_file, 'r') as f:
+            return json.load(f)
+    except:
+        return {"status": "idle", "symbol": None, "start_time": None, "error": None}
+
+
+def download_worker(symbol, force, api_key):
+    """Background worker to run downloads."""
+    try:
+        # Update status to downloading
+        update_download_status("downloading", symbol)
+        
+        # Build commands
+        py = sys.executable
+        bars_cmd = [py, '-m', 'src.backtesting.download_bars', '--symbols', symbol]
+        nbbo_cmd = [py, '-m', 'src.backtesting.download_nbbo_1s', '--symbol', symbol]
+        if force:
+            bars_cmd.append('--force')
+            nbbo_cmd.append('--force')
+
+        env = os.environ.copy()
+        env['MY_API_KEY'] = api_key
+        
+        # Run bars download
+        bars_proc = subprocess.run(bars_cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, env=env)
+        
+        if bars_proc.returncode != 0:
+            error_msg = f"Bars download failed: {bars_proc.stderr.strip() or bars_proc.stdout.strip()}"
+            update_download_status("failed", symbol, error_msg)
+            return
+
+        # Run NBBO download
+        nbbo_proc = subprocess.run(nbbo_cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, env=env)
+        
+        if nbbo_proc.returncode != 0:
+            error_msg = f"NBBO download failed: {nbbo_proc.stderr.strip() or nbbo_proc.stdout.strip()}"
+            update_download_status("failed", symbol, error_msg)
+            return
+
+        # Success - add to downloaded tickers if complete
+        add_downloaded_ticker(symbol)
+        update_download_status("complete", symbol)
+        
+    except Exception as e:
+        error_msg = f"Exception during download: {str(e)}"
+        update_download_status("failed", symbol, error_msg)
+
+
 def create_layout():
-    complete = list_complete_symbols()
+    # Load initial data
+    downloaded, incomplete = load_downloaded_tickers()
+    status_data = get_download_status()
     return html.Div([
         html.H2("Backtesting", style={'textAlign': 'center', 'margin': '0 0 28px'}),
 
@@ -131,12 +273,53 @@ def create_layout():
             'boxShadow': '0 6px 20px rgba(0,0,0,0.08)', 'backgroundColor': 'white', 'boxSizing': 'border-box'
         }),
 
-        html.Div(id='download-status', style={'textAlign': 'center', 'margin': '0 0 32px', 'minHeight': '26px'}),
+        html.Div(id='download-status', 
+                 children=get_status_message(status_data),
+                 style={'textAlign': 'center', 'margin': '0 0 32px', 'minHeight': '26px'}),
 
         html.H3("Tickers we already downloaded", style={'textAlign': 'center', 'margin': '0 0 14px'}),
-        html.Div(id='complete-tickers', children=render_complete_list(complete),
-                 style={'maxWidth': '760px', 'margin': '0 auto 36px'})
+        html.Div(id='downloaded-tickers', children=render_ticker_list(downloaded),
+                 style={'maxWidth': '760px', 'margin': '0 auto 20px'}),
+
+        html.Div(id='missing-tickers-section', 
+                 children=get_missing_tickers_section(incomplete),
+                 style={'maxWidth': '760px', 'margin': '0 auto 20px'}),
+
+        html.Div([
+            html.Button('Validate Downloads', id='validate-btn', n_clicks=0,
+                        style={'padding': '8px 16px', 'borderRadius': '8px', 'cursor': 'pointer'})
+        ], style={'textAlign': 'center', 'margin': '20px 0'}),
+        
+        # Hidden div to trigger periodic updates
+        dcc.Interval(
+            id='interval-component',
+            interval=3000,  # Update every 3 seconds
+            n_intervals=0
+        )
     ], style={'padding': '18px'})
+
+
+def get_status_message(status_data):
+    """Get status message based on current download status."""
+    if status_data['status'] == 'downloading':
+        return f"Downloading {status_data['symbol']}... (started at {status_data['start_time']})"
+    elif status_data['status'] == 'complete':
+        return f"Download completed for {status_data['symbol']}!"
+    elif status_data['status'] == 'failed':
+        return f"Download failed for {status_data['symbol']}: {status_data['error']}"
+    else:
+        return ""
+
+
+def get_missing_tickers_section(incomplete_tickers):
+    """Get the missing tickers section, only show if there are any."""
+    if not incomplete_tickers:
+        return html.Div()
+    
+    return html.Div([
+        html.H3("Tickers missing data", style={'textAlign': 'center', 'margin': '0 0 14px', 'color': '#e74c3c'}),
+        render_ticker_list(incomplete_tickers, "None")
+    ])
 
 
 # Create the layout variable that Dash expects
@@ -145,7 +328,8 @@ layout = create_layout()
 
 @dash.callback(
     Output('download-status', 'children'),
-    Output('complete-tickers', 'children'),
+    Output('downloaded-tickers', 'children'),
+    Output('missing-tickers-section', 'children'),
     Input('download-btn', 'n_clicks'),
     State('ticker-input', 'value'),
     State('force-check', 'value'),
@@ -154,43 +338,76 @@ layout = create_layout()
 )
 def handle_download(n_clicks, ticker, force_values, api_key):
     if not ticker or not str(ticker).strip():
-        return "Please enter a ticker symbol.", render_complete_list(list_complete_symbols())
+        downloaded, incomplete = load_downloaded_tickers()
+        return "Please enter a ticker symbol.", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
     if not api_key or not str(api_key).strip():
-        return "Please enter your API key.", render_complete_list(list_complete_symbols())
+        downloaded, incomplete = load_downloaded_tickers()
+        return "Please enter your API key.", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
 
     sym = str(ticker).strip().upper()
     force = 'force' in (force_values or [])
     api_key_str = str(api_key).strip()
 
-    # Build commands
-    py = sys.executable
-    bars_cmd = [py, '-m', 'src.backtesting.download_bars', '--symbols', sym]
-    nbbo_cmd = [py, '-m', 'src.backtesting.download_nbbo_1s', '--symbol', sym]
-    if force:
-        bars_cmd.append('--force')
-        nbbo_cmd.append('--force')
+    # Check if already downloading
+    current_status = get_download_status()
+    if current_status['status'] == 'downloading':
+        downloaded, incomplete = load_downloaded_tickers()
+        return f"Download already in progress for {current_status['symbol']}. Please wait.", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
 
-    try:
-        env = os.environ.copy()
-        env['MY_API_KEY'] = api_key_str
-        # Run both sequentially to keep server resource usage simple
-        bars_proc = subprocess.run(bars_cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, env=env)
-        if bars_proc.returncode != 0:
-            msg = f"Bars download failed for {sym}: {bars_proc.stderr.strip() or bars_proc.stdout.strip()}"
-            return msg, render_complete_list(list_complete_symbols())
+    # Start background download
+    thread = threading.Thread(target=download_worker, args=(sym, force, api_key_str))
+    thread.daemon = True
+    thread.start()
 
-        nbbo_proc = subprocess.run(nbbo_cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, env=env)
-        if nbbo_proc.returncode != 0:
-            msg = f"NBBO download failed for {sym}: {nbbo_proc.stderr.strip() or nbbo_proc.stdout.strip()}"
-            return msg, render_complete_list(list_complete_symbols())
+    # Return immediately
+    status = f"Download started for {sym}. Status will update automatically."
+    downloaded, incomplete = load_downloaded_tickers()
+    return status, render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
 
-        # Success
-        status = f"Completed downloads for {sym}."
-    except Exception as e:
-        status = f"Error: {e}"
 
-    complete = list_complete_symbols()
-    return status, render_complete_list(complete)
+@dash.callback(
+    Output('download-status', 'children', allow_duplicate=True),
+    Output('downloaded-tickers', 'children', allow_duplicate=True),
+    Output('missing-tickers-section', 'children', allow_duplicate=True),
+    Input('interval-component', 'n_intervals'),
+    prevent_initial_call=True
+)
+def update_status(n_intervals):
+    """Update status based on download progress."""
+    status_data = get_download_status()
+    downloaded, incomplete = load_downloaded_tickers()
+    
+    if status_data['status'] == 'idle':
+        return "", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
+    elif status_data['status'] == 'downloading':
+        return f"Downloading {status_data['symbol']}... (started at {status_data['start_time']})", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
+    elif status_data['status'] == 'complete':
+        # Clear status after showing completion and refresh ticker list
+        update_download_status("idle")
+        downloaded, incomplete = load_downloaded_tickers()  # Refresh in case new ticker was added
+        return f"Download completed for {status_data['symbol']}!", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
+    elif status_data['status'] == 'failed':
+        # Clear status after showing error
+        update_download_status("idle")
+        return f"Download failed for {status_data['symbol']}: {status_data['error']}", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
+    
+    return "", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
+
+
+@dash.callback(
+    Output('downloaded-tickers', 'children', allow_duplicate=True),
+    Output('missing-tickers-section', 'children', allow_duplicate=True),
+    Input('validate-btn', 'n_clicks'),
+    prevent_initial_call=True
+)
+def validate_downloads(n_clicks):
+    """Validate all downloads and update ticker lists."""
+    if n_clicks == 0:
+        return html.Div(), html.Div()
+    
+    complete, incomplete = validate_all_tickers()
+    
+    return render_ticker_list(complete), get_missing_tickers_section(incomplete)
 
 
 # Register the page

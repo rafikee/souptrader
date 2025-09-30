@@ -40,6 +40,7 @@ except ImportError as e:
 # Get project root (3 levels up from src/backtesting/)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 DATA_ROOT = os.path.join(PROJECT_ROOT, 'data', 'backtest_data')
+LOGS_DIR = os.path.join(PROJECT_ROOT, 'logs')
 START_DATE_STR = "2024-09-01"
 END_DATE_STR = "2025-08-31"
 DATASET = "XNAS.ITCH"
@@ -66,6 +67,26 @@ def parse_args() -> argparse.Namespace:
 
 def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
+
+
+def log_nbbo_output(symbol, force, output_lines):
+    """Log NBBO download output to file, replacing previous log."""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    log_file = os.path.join(LOGS_DIR, 'nbbo_download.log')
+    
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    with open(log_file, 'w') as f:
+        f.write(f"NBBO Download Log - {timestamp}\n")
+        f.write(f"Symbol: {symbol}\n")
+        f.write(f"Force: {force}\n")
+        f.write("=" * 50 + "\n\n")
+        
+        for line in output_lines:
+            f.write(line + "\n")
+        
+        f.write("\n" + "=" * 50 + "\n")
+        f.write(f"NBBO download completed at {timestamp}\n")
 
 
 def daterange_days(start: pd.Timestamp, end: pd.Timestamp) -> List[pd.Timestamp]:
@@ -197,12 +218,23 @@ def main() -> None:
     client = get_client()
 
     days = daterange_days(start, end)
+    
+    # Capture output for logging
+    output_lines = []
+    output_lines.append(f"Starting NBBO download for symbol: {symbol}")
+    output_lines.append(f"Force mode: {args.force}")
+    output_lines.append(f"Date range: {START_DATE_STR} to {END_DATE_STR}")
+    output_lines.append(f"Total days to process: {len(days)}")
+    output_lines.append("")
 
     # Pre-scan: if all expected daily files exist for the date range, skip this symbol entirely
     out_dir = os.path.join(DATA_ROOT, symbol, "nbbo1s")
     expected_files = [os.path.join(out_dir, f"{d.strftime('%Y-%m-%d')}.parquet") for d in days]
     if expected_files and all(os.path.exists(p) for p in expected_files) and not args.force:
-        print(f"All NBBO 1s daily files exist for {symbol}; skipping symbol.")
+        msg = f"All NBBO 1s daily files exist for {symbol}; skipping symbol."
+        print(msg)
+        output_lines.append(msg)
+        log_nbbo_output(symbol, args.force, output_lines)
         return
 
     # Progress tracking
@@ -218,8 +250,9 @@ def main() -> None:
         rate = completed / elapsed if elapsed > 0 else 0
         eta = (len(days) - completed) / rate if rate > 0 else 0
         
-        print(f"\rProgress: {completed}/{len(days)} ({completed/len(days)*100:.1f}%) | "
-              f"{total_rows:,} rows | {rate:.1f} days/sec | ETA: {eta/60:.1f}min", end="", flush=True)
+        progress_msg = f"Progress: {completed}/{len(days)} ({completed/len(days)*100:.1f}%) | {total_rows:,} rows | {rate:.1f} days/sec | ETA: {eta/60:.1f}min"
+        print(f"\r{progress_msg}", end="", flush=True)
+        output_lines.append(progress_msg)
 
     async def runner():
         sem = asyncio.Semaphore(6)  # bounded concurrency
@@ -231,13 +264,24 @@ def main() -> None:
         errors = [msg for msg, rows in results if msg.startswith("ERROR:")]
         no_data = [msg for msg, rows in results if msg.startswith("No data:")]
         
-        print(f"\n\nCompleted: {ok_count}/{len(days)} days, {total_rows:,} total rows")
+        summary_msg = f"Completed: {ok_count}/{len(days)} days, {total_rows:,} total rows"
+        print(f"\n\n{summary_msg}")
+        output_lines.append("")
+        output_lines.append(summary_msg)
+        
         if errors:
-            print(f"Errors: {len(errors)}")
+            error_msg = f"Errors: {len(errors)}"
+            print(error_msg)
+            output_lines.append(error_msg)
         if no_data:
-            print(f"No data: {len(no_data)}")
+            no_data_msg = f"No data: {len(no_data)}"
+            print(no_data_msg)
+            output_lines.append(no_data_msg)
 
     asyncio.run(runner())
+    
+    # Log the output
+    log_nbbo_output(symbol, args.force, output_lines)
 
 
 if __name__ == "__main__":
