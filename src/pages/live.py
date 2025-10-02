@@ -217,7 +217,7 @@ def create_layout():
     ])
 
 # Create the layout variable that Dash expects
-layout = create_layout()
+layout = create_layout
 
 # Register the page
 dash.register_page(__name__, path="/", name="My Trading Performance")

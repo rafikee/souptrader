@@ -439,7 +439,7 @@ def get_missing_tickers_section(incomplete_tickers):
 
 
 # Create the layout variable that Dash expects
-layout = create_layout()
+layout = create_layout
 
 
 @dash.callback(
