@@ -1,6 +1,9 @@
 # Environment variables
 .env
 
+# Service account
+src/screener/service_account.json
+
 # Database
 *.db
 data/backtest_data/
