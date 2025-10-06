@@ -162,7 +162,7 @@ def get_stock_data(ticker, start_date, end_date, max_retries=3):
 
 def main():
     # Load service account JSON locally
-    with open("service_account.json") as json_file:
+    with open("src/screener/service_account.json") as json_file:
         service_account_json = json.load(json_file)
 
     # To access Google Sheets
