@@ -139,7 +139,14 @@ def download_month_bars(
 
     # Convert to DataFrame and save
     df = bars.df
-    df.to_parquet(output_file)
+    
+    # Reset index to convert timestamp from index to column
+    if isinstance(df.index, pd.MultiIndex):
+        df = df.reset_index()
+    elif 'timestamp' not in df.columns:
+        df = df.reset_index()
+    
+    df.to_parquet(output_file, index=False)
     print(f"  Saved {len(df)} bars to {output_file}")
     return True
 
