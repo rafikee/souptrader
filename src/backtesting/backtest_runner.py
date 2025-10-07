@@ -299,9 +299,12 @@ def entry_signal_gap_breakout(data_5min, index, vwap, rsi, filters):
 
 def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price, 
                              stop_loss_pct, trailing_stop_pct, take_profit_pct, 
-                             logger):
+                             log_func):
     """
     Execute a trade using NBBO data for realistic entry/exit.
+    
+    Args:
+        log_func: Function to call for logging (takes a string message)
     
     Returns:
         dict: Trade results or None if trade not executed
@@ -311,7 +314,7 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
     try:
         nbbo_data = load_nbbo_data_for_day(ticker, trade_date)
     except FileNotFoundError as e:
-        logger.append(f"ERROR: {str(e)}")
+        log_func(f"ERROR: {str(e)}")
         return None
     
     # Calculate buy stop price (0.1% above signal price)
@@ -328,7 +331,7 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
             break
     
     if entry_tick is None:
-        logger.append(f"  Buy stop not filled (price never reached ${buy_stop_price:.2f})")
+        log_func(f"  Buy stop not filled (price never reached ${buy_stop_price:.2f})")
         return None
     
     # Entry executed at ask price
@@ -336,8 +339,8 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
     entry_time = entry_tick['ts_event']
     shares = int(POSITION_SIZE / entry_price)
     
-    logger.append(f"ENTRY: {entry_time} at ${entry_price:.2f} ({shares} shares)")
-    logger.append(f"  Buy stop triggered at ${buy_stop_price:.2f}")
+    log_func(f"ENTRY: {entry_time} at ${entry_price:.2f} ({shares} shares)")
+    log_func(f"  Buy stop triggered at ${buy_stop_price:.2f}")
     
     # Initialize stop loss tracking
     initial_stop_price = entry_price * (1 + stop_loss_pct)
@@ -346,11 +349,11 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
     trailing_activated = False
     activation_threshold = entry_price * (1 + trailing_stop_pct)
     
-    logger.append(f"  Initial stop: ${initial_stop_price:.2f} ({stop_loss_pct*100:.2f}%)")
-    logger.append(f"  Trailing activates at: ${activation_threshold:.2f} (+{trailing_stop_pct*100:.2f}%)")
+    log_func(f"  Initial stop: ${initial_stop_price:.2f} ({stop_loss_pct*100:.2f}%)")
+    log_func(f"  Trailing activates at: ${activation_threshold:.2f} (+{trailing_stop_pct*100:.2f}%)")
     if take_profit_pct:
         take_profit_price = entry_price * (1 + take_profit_pct)
-        logger.append(f"  Take profit: ${take_profit_price:.2f} (+{take_profit_pct*100:.2f}%)")
+        log_func(f"  Take profit: ${take_profit_price:.2f} (+{take_profit_pct*100:.2f}%)")
     
     # Monitor exit using every NBBO tick after entry
     nbbo_after_entry = nbbo_data[nbbo_data['ts_event'] > entry_time]
@@ -393,7 +396,7 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
             # Activate trailing stop
             if not trailing_activated and ask_price >= activation_threshold:
                 trailing_activated = True
-                logger.append(f"  TRAILING ACTIVATED at ${ask_price:.2f}")
+                log_func(f"  TRAILING ACTIVATED at ${ask_price:.2f}")
             
             # Update trailing stop
             if trailing_activated:
@@ -412,9 +415,9 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
     pnl = (exit_price - entry_price) * shares
     pnl_pct = (exit_price - entry_price) / entry_price
     
-    logger.append(f"EXIT: {exit_time} at ${exit_price:.2f} ({exit_reason})")
-    logger.append(f"  P&L: ${pnl:,.2f} ({pnl_pct*100:+.2f}%)")
-    logger.append("-" * 60)
+    log_func(f"EXIT: {exit_time} at ${exit_price:.2f} ({exit_reason})")
+    log_func(f"  P&L: ${pnl:,.2f} ({pnl_pct*100:+.2f}%)")
+    log_func("-" * 60)
     
     return {
         'entry_time': entry_time,
@@ -457,24 +460,38 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
     results = BacktestResults()
     logger = results.log_messages
     
+    # Setup log file
+    log_file_path = PROJECT_ROOT / 'logs' / 'backtest_results.log'
+    log_file_path.parent.mkdir(exist_ok=True)
+    
+    # Clear log file
+    with open(log_file_path, 'w') as f:
+        f.write('')
+    
+    def log(message):
+        """Log to both memory and file"""
+        logger.append(message)
+        with open(log_file_path, 'a') as f:
+            f.write(message + '\n')
+    
     try:
-        logger.append("=" * 60)
-        logger.append(f"BACKTEST: {config.ticker}")
-        logger.append(f"Strategy: {config.strategy}")
-        logger.append(f"Filters: {config.filters}")
-        logger.append(f"Stop Loss: {config.stop_loss_pct*100:.2f}%")
-        logger.append(f"Trailing Stop: {config.trailing_stop_pct*100:.2f}%")
+        log("=" * 60)
+        log(f"BACKTEST: {config.ticker}")
+        log(f"Strategy: {config.strategy}")
+        log(f"Filters: {config.filters}")
+        log(f"Stop Loss: {config.stop_loss_pct*100:.2f}%")
+        log(f"Trailing Stop: {config.trailing_stop_pct*100:.2f}%")
         if config.take_profit_pct:
-            logger.append(f"Take Profit: {config.take_profit_pct*100:.2f}%")
-        logger.append("=" * 60)
+            log(f"Take Profit: {config.take_profit_pct*100:.2f}%")
+        log("=" * 60)
         
         # Load 5-minute bar data
-        logger.append("Loading 5-minute bar data...")
+        log("Loading 5-minute bar data...")
         data_5min = load_bar_data(config.ticker, '5Min')
-        logger.append(f"Loaded {len(data_5min)} 5-minute candles")
+        log(f"Loaded {len(data_5min)} 5-minute candles")
         
         # Calculate indicators based on strategy
-        logger.append("Calculating indicators...")
+        log("Calculating indicators...")
         
         if config.strategy == 'sma_alignment':
             smma_21 = calculate_smma(data_5min, 21)
@@ -499,7 +516,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
             body_sizes = None
             daily_smma_21 = daily_smma_50 = daily_smma_200 = None
         
-        logger.append("Indicators calculated, starting backtest...")
+        log("Indicators calculated, starting backtest...")
         
         # Track trades
         trades = []
@@ -511,7 +528,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
         else:
             loop_start = 20 * 78  # Need 20 days for RSI
         
-        logger.append(f"Processing {len(data_5min) - loop_start} candles...")
+        log(f"Processing {len(data_5min) - loop_start} candles...")
         
         # Main backtest loop
         for i in range(loop_start, len(data_5min) - 1):
@@ -536,7 +553,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
                 )
             
             if entry_signal:
-                logger.append(f"\nENTRY SIGNAL: {current_row['timestamp']} at ${current_row['close']:.2f}")
+                log(f"\nENTRY SIGNAL: {current_row['timestamp']} at ${current_row['close']:.2f}")
                 
                 # Execute trade with NBBO data
                 trade = execute_trade_with_nbbo(
@@ -546,7 +563,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
                     config.stop_loss_pct,
                     config.trailing_stop_pct,
                     config.take_profit_pct,
-                    logger
+                    log
                 )
                 
                 if trade:
@@ -575,32 +592,32 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
                 results.exit_reasons[reason] = results.exit_reasons.get(reason, 0) + 1
         
         # Generate summary
-        logger.append("\n" + "=" * 60)
-        logger.append("BACKTEST SUMMARY")
-        logger.append("=" * 60)
-        logger.append(f"Total Trades: {results.total_trades}")
-        logger.append(f"Winning Trades: {results.winning_trades}")
-        logger.append(f"Losing Trades: {results.losing_trades}")
-        logger.append(f"Win Rate: {results.win_rate:.1f}%")
-        logger.append(f"Total P&L: ${results.total_pnl:,.2f}")
-        logger.append(f"Total Return: {results.total_return_pct:+.2f}%")
+        log("\n" + "=" * 60)
+        log("BACKTEST SUMMARY")
+        log("=" * 60)
+        log(f"Total Trades: {results.total_trades}")
+        log(f"Winning Trades: {results.winning_trades}")
+        log(f"Losing Trades: {results.losing_trades}")
+        log(f"Win Rate: {results.win_rate:.1f}%")
+        log(f"Total P&L: ${results.total_pnl:,.2f}")
+        log(f"Total Return: {results.total_return_pct:+.2f}%")
         if results.winning_trades > 0:
-            logger.append(f"Average Win: ${results.avg_win:,.2f}")
+            log(f"Average Win: ${results.avg_win:,.2f}")
         if results.losing_trades > 0:
-            logger.append(f"Average Loss: ${results.avg_loss:,.2f}")
+            log(f"Average Loss: ${results.avg_loss:,.2f}")
         
         if results.exit_reasons:
-            logger.append("\nExit Reasons:")
+            log("\nExit Reasons:")
             for reason, count in results.exit_reasons.items():
-                logger.append(f"  {reason}: {count}")
+                log(f"  {reason}: {count}")
         
-        logger.append("=" * 60)
+        log("=" * 60)
         
     except Exception as e:
         results.error = str(e)
-        logger.append(f"\nERROR: {str(e)}")
+        log(f"\nERROR: {str(e)}")
         import traceback
-        logger.append(traceback.format_exc())
+        log(traceback.format_exc())
     
     return results
 

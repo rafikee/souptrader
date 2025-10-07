@@ -144,6 +144,15 @@ def create_layout():
                 }
             ),
             
+            # Loading indicator (appears right below button)
+            html.Div([
+                dcc.Loading(
+                    id="loading-backtest",
+                    type="default",
+                    children=html.Div(id='loading-status', style={'marginTop': '20px', 'textAlign': 'center'})
+                )
+            ]),
+            
         ], style={
             'backgroundColor': '#f8f9fa',
             'padding': '30px',
@@ -178,7 +187,8 @@ layout = create_layout
 
 # Callback for running backtest
 @callback(
-    Output('backtest-results', 'children'),
+    [Output('loading-status', 'children'),
+     Output('backtest-results', 'children')],
     Input('run-backtest-btn', 'n_clicks'),
     State('ticker-dropdown', 'value'),
     State('strategy-radio', 'value'),
@@ -191,19 +201,19 @@ layout = create_layout
 def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, trailing_stop, take_profit):
     # Validation
     if not ticker:
-        return html.Div([
+        return "", html.Div([
             html.P("⚠️ Please select a ticker first.", 
                   style={'color': '#e74c3c', 'fontWeight': 'bold', 'textAlign': 'center'})
         ])
     
     if not strategy:
-        return html.Div([
+        return "", html.Div([
             html.P("⚠️ Please select a strategy.", 
                   style={'color': '#e74c3c', 'fontWeight': 'bold', 'textAlign': 'center'})
         ])
     
     if stop_loss is None or trailing_stop is None:
-        return html.Div([
+        return "", html.Div([
             html.P("⚠️ Please set stop loss and trailing stop values.", 
                   style={'color': '#e74c3c', 'fontWeight': 'bold', 'textAlign': 'center'})
         ])
@@ -231,7 +241,7 @@ def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, traili
         results = run_backtest(config)
         
         if results.error:
-            return html.Div([
+            return "", html.Div([
                 html.H4("❌ Backtest Error", style={'color': '#e74c3c', 'marginBottom': '20px'}),
                 html.Pre(
                     '\n'.join(results.log_messages),
@@ -309,11 +319,11 @@ def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, traili
             )
         ])
         
-        return html.Div([summary_card, log_output])
+        return "", html.Div([summary_card, log_output])
         
     except Exception as e:
         import traceback
-        return html.Div([
+        return "", html.Div([
             html.H4("❌ Unexpected Error", style={'color': '#e74c3c', 'marginBottom': '20px'}),
             html.Pre(
                 f"Error: {str(e)}\n\n{traceback.format_exc()}",
