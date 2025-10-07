@@ -18,6 +18,17 @@ UTC = pytz.UTC
 ET = pytz.timezone('US/Eastern')
 NYSE = xcals.get_calendar('XNYS')
 
+
+def format_et_time(timestamp):
+    """Convert timestamp to Eastern Time string for logging"""
+    if timestamp.tzinfo is None:
+        timestamp = UTC.localize(timestamp)
+    elif timestamp.tzinfo != UTC:
+        timestamp = timestamp.astimezone(UTC)
+    
+    et_time = timestamp.astimezone(ET)
+    return et_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+
 # Constants
 POSITION_SIZE = 100000  # $100k position size
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -358,7 +369,7 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
     entry_time = entry_tick['ts_event']
     shares = int(POSITION_SIZE / entry_price)
     
-    log_func(f"ENTRY: {entry_time} at ${entry_price:.2f} ({shares} shares)")
+    log_func(f"ENTRY: {format_et_time(entry_time)} at ${entry_price:.2f} ({shares} shares)")
     log_func(f"  Buy stop triggered at ${buy_stop_price:.2f}")
     
     # Initialize stop loss tracking
@@ -434,7 +445,7 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
     pnl = (exit_price - entry_price) * shares
     pnl_pct = (exit_price - entry_price) / entry_price
     
-    log_func(f"EXIT: {exit_time} at ${exit_price:.2f} ({exit_reason})")
+    log_func(f"EXIT: {format_et_time(exit_time)} at ${exit_price:.2f} ({exit_reason})")
     log_func(f"  P&L: ${pnl:,.2f} ({pnl_pct*100:+.2f}%)")
     log_func("-" * 60)
     
@@ -556,7 +567,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
                 )
             
             if entry_signal:
-                log(f"\nENTRY SIGNAL: {current_row['timestamp']} at ${current_row['close']:.2f}")
+                log(f"\nENTRY SIGNAL: {format_et_time(current_row['timestamp'])} at ${current_row['close']:.2f}")
                 
                 # Execute trade with NBBO data
                 trade = execute_trade_with_nbbo(
