@@ -53,16 +53,32 @@ class BacktestResults:
         self.error = None
 
 
+def is_regular_trading_hours(timestamp):
+    """Check if timestamp is during regular trading hours"""
+    if timestamp.tzinfo is None:
+        timestamp = UTC.localize(timestamp)
+    
+    et_time = timestamp.astimezone(ET)
+    
+    if not NYSE.is_session(et_time.date()):
+        return False
+    
+    session_start = NYSE.session_open(et_time.date())
+    session_end = NYSE.session_close(et_time.date())
+    
+    return session_start <= timestamp <= session_end
+
+
 def load_bar_data(ticker, timeframe='5Min'):
     """
-    Load bar data from local parquet files.
+    Load bar data from local parquet files and filter to regular trading hours.
     
     Args:
         ticker (str): Stock symbol
         timeframe (str): '5Min' or '1Min'
     
     Returns:
-        pd.DataFrame: Concatenated bar data sorted by timestamp
+        pd.DataFrame: Concatenated bar data sorted by timestamp, filtered to RTH
     """
     ticker_path = BACKTEST_DATA_PATH / ticker / timeframe
     
@@ -83,6 +99,9 @@ def load_bar_data(ticker, timeframe='5Min'):
     data = pd.concat(dfs, ignore_index=True)
     data['timestamp'] = pd.to_datetime(data['timestamp'])
     data = data.sort_values('timestamp').reset_index(drop=True)
+    
+    # Filter to regular trading hours only (9:30 AM - 4:00 PM ET)
+    data = data[data['timestamp'].apply(is_regular_trading_hours)].reset_index(drop=True)
     
     return data
 
@@ -429,22 +448,6 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
         'pnl_pct': pnl_pct,
         'exit_reason': exit_reason
     }
-
-
-def is_regular_trading_hours(timestamp):
-    """Check if timestamp is during regular trading hours"""
-    if timestamp.tzinfo is None:
-        timestamp = UTC.localize(timestamp)
-    
-    et_time = timestamp.astimezone(ET)
-    
-    if not NYSE.is_session(et_time.date()):
-        return False
-    
-    session_start = NYSE.session_open(et_time.date())
-    session_end = NYSE.session_close(et_time.date())
-    
-    return session_start <= timestamp <= session_end
 
 
 def run_backtest(config: BacktestConfig) -> BacktestResults:

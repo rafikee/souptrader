@@ -144,15 +144,6 @@ def create_layout():
                 }
             ),
             
-            # Loading indicator (appears right below button)
-            html.Div([
-                dcc.Loading(
-                    id="loading-backtest",
-                    type="default",
-                    children=html.Div(id='loading-status', style={'marginTop': '20px', 'textAlign': 'center'})
-                )
-            ]),
-            
         ], style={
             'backgroundColor': '#f8f9fa',
             'padding': '30px',
@@ -162,22 +153,26 @@ def create_layout():
             'border': '1px solid #dee2e6'
         }),
         
-        # Results section
+        # Results section with loading spinner
         html.Div([
             html.H3("Results", style={'marginTop': '40px', 'marginBottom': '20px', 'color': '#34495e', 'textAlign': 'center'}),
-            html.Div(
-                id='backtest-results',
-                children=html.P("Results will appear here after running a backtest.", 
-                              style={'textAlign': 'center', 'color': '#7f8c8d', 'fontStyle': 'italic'}),
-                style={
-                    'backgroundColor': '#f8f9fa',
-                    'padding': '30px',
-                    'borderRadius': '10px',
-                    'maxWidth': '1200px',
-                    'margin': '0 auto',
-                    'border': '1px solid #dee2e6',
-                    'minHeight': '200px'
-                }
+            dcc.Loading(
+                id="loading-backtest",
+                type="default",
+                children=html.Div(
+                    id='backtest-results',
+                    children=html.P("Results will appear here after running a backtest.", 
+                                  style={'textAlign': 'center', 'color': '#7f8c8d', 'fontStyle': 'italic'}),
+                    style={
+                        'backgroundColor': '#f8f9fa',
+                        'padding': '30px',
+                        'borderRadius': '10px',
+                        'maxWidth': '1200px',
+                        'margin': '0 auto',
+                        'border': '1px solid #dee2e6',
+                        'minHeight': '200px'
+                    }
+                )
             )
         ])
     ], style={'padding': '20px'})
@@ -187,8 +182,7 @@ layout = create_layout
 
 # Callback for running backtest
 @callback(
-    [Output('loading-status', 'children'),
-     Output('backtest-results', 'children')],
+    Output('backtest-results', 'children'),
     Input('run-backtest-btn', 'n_clicks'),
     State('ticker-dropdown', 'value'),
     State('strategy-radio', 'value'),
@@ -201,22 +195,16 @@ layout = create_layout
 def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, trailing_stop, take_profit):
     # Validation
     if not ticker:
-        return "", html.Div([
-            html.P("⚠️ Please select a ticker first.", 
-                  style={'color': '#e74c3c', 'fontWeight': 'bold', 'textAlign': 'center'})
-        ])
+        return html.P("⚠️ Please select a ticker first.", 
+                     style={'color': '#e74c3c', 'fontWeight': 'bold', 'textAlign': 'center'})
     
     if not strategy:
-        return "", html.Div([
-            html.P("⚠️ Please select a strategy.", 
-                  style={'color': '#e74c3c', 'fontWeight': 'bold', 'textAlign': 'center'})
-        ])
+        return html.P("⚠️ Please select a strategy.", 
+                     style={'color': '#e74c3c', 'fontWeight': 'bold', 'textAlign': 'center'})
     
     if stop_loss is None or trailing_stop is None:
-        return "", html.Div([
-            html.P("⚠️ Please set stop loss and trailing stop values.", 
-                  style={'color': '#e74c3c', 'fontWeight': 'bold', 'textAlign': 'center'})
-        ])
+        return html.P("⚠️ Please set stop loss and trailing stop values.", 
+                     style={'color': '#e74c3c', 'fontWeight': 'bold', 'textAlign': 'center'})
     
     # Convert filters list to dict
     filters_dict = {f: True for f in (filters or [])}
@@ -241,7 +229,7 @@ def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, traili
         results = run_backtest(config)
         
         if results.error:
-            return "", html.Div([
+            return html.Div([
                 html.H4("❌ Backtest Error", style={'color': '#e74c3c', 'marginBottom': '20px'}),
                 html.Pre(
                     '\n'.join(results.log_messages),
@@ -319,11 +307,11 @@ def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, traili
             )
         ])
         
-        return "", html.Div([summary_card, log_output])
+        return html.Div([summary_card, log_output])
         
     except Exception as e:
         import traceback
-        return "", html.Div([
+        return html.Div([
             html.H4("❌ Unexpected Error", style={'color': '#e74c3c', 'marginBottom': '20px'}),
             html.Pre(
                 f"Error: {str(e)}\n\n{traceback.format_exc()}",
@@ -343,4 +331,3 @@ def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, traili
 
 # Register the page
 dash.register_page(__name__, path="/backtest", name="Backtest")
-
