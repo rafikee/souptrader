@@ -111,8 +111,10 @@ def load_bar_data(ticker, timeframe='5Min'):
     data['timestamp'] = pd.to_datetime(data['timestamp'])
     data = data.sort_values('timestamp').reset_index(drop=True)
     
-    # Filter to regular trading hours only (9:30 AM - 4:00 PM ET)
-    data = data[data['timestamp'].apply(is_regular_trading_hours)].reset_index(drop=True)
+    # Filter to regular trading hours only for intraday data (5Min)
+    # Daily data doesn't need RTH filtering since it represents the full trading day
+    if timeframe == '5Min':
+        data = data[data['timestamp'].apply(is_regular_trading_hours)].reset_index(drop=True)
     
     return data
 
@@ -143,6 +145,12 @@ def load_nbbo_data_for_day(ticker, trade_date):
 
 def calculate_smma(data, period, column='close'):
     """Calculate Smoothed Moving Average (SMMA)"""
+    if len(data) == 0:
+        raise ValueError(f"Cannot calculate SMMA: data is empty")
+    
+    if len(data) < period:
+        raise ValueError(f"Cannot calculate SMMA: need at least {period} bars, but only have {len(data)}")
+    
     smma = pd.Series(index=data.index, dtype=float)
     smma.iloc[0] = data[column].iloc[0]
     
@@ -517,12 +525,20 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
             # Daily SMAs - load actual daily data
             try:
                 daily_data = load_bar_data(config.ticker, 'Daily')
-                daily_smma_21 = calculate_smma(daily_data, 21)
-                daily_smma_50 = calculate_smma(daily_data, 50)
-                daily_smma_200 = calculate_smma(daily_data, 200)
                 log(f"Loaded daily data: {len(daily_data)} bars")
+                
+                if len(daily_data) < 200:
+                    log(f"WARNING: Only {len(daily_data)} daily bars available, need 200 for daily SMA alignment. Skipping daily SMA filter.")
+                    daily_smma_21 = daily_smma_50 = daily_smma_200 = None
+                else:
+                    daily_smma_21 = calculate_smma(daily_data, 21)
+                    daily_smma_50 = calculate_smma(daily_data, 50)
+                    daily_smma_200 = calculate_smma(daily_data, 200)
             except FileNotFoundError:
                 log("WARNING: No daily data found, skipping daily SMA alignment filter")
+                daily_smma_21 = daily_smma_50 = daily_smma_200 = None
+            except ValueError as e:
+                log(f"WARNING: Cannot calculate daily SMAs: {e}")
                 daily_smma_21 = daily_smma_50 = daily_smma_200 = None
             
             vwap = None
