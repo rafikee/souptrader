@@ -19,7 +19,9 @@ app.layout = html.Div([
         html.Div([
             dcc.Link("My Trading Performance", href="/", 
                     style={'margin': '0 20px', 'color': '#3498db', 'textDecoration': 'none'}),
-            dcc.Link("Backtesting", href="/backtest", 
+            dcc.Link("Download Ticker Data", href="/download-ticker-data", 
+                    style={'margin': '0 20px', 'color': '#3498db', 'textDecoration': 'none'}),
+            dcc.Link("Backtest", href="/backtest", 
                     style={'margin': '0 20px', 'color': '#3498db', 'textDecoration': 'none'})
         ], style={'float': 'right', 'marginTop': '10px'})
     ], style={'padding': '20px', 'borderBottom': '2px solid #ecf0f1', 'backgroundColor': '#f8f9fa'}),
