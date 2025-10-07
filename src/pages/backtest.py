@@ -12,14 +12,20 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src'))
 
 from backtesting.backtest_runner import BacktestConfig, run_backtest
 
+# Import validation to check for complete tickers
+sys.path.insert(0, PROJECT_ROOT)
+from src.backtesting.data_validation import is_symbol_complete
+
 def load_tickers():
-    """Load available tickers from backtest_data folder"""
+    """Load only complete tickers with all required data (5Min, Daily, NBBO)"""
     backtest_data_path = os.path.join(PROJECT_ROOT, 'data', 'backtest_data')
     try:
         if os.path.exists(backtest_data_path):
-            tickers = [d for d in os.listdir(backtest_data_path) 
-                      if os.path.isdir(os.path.join(backtest_data_path, d))]
-            return sorted(tickers)
+            all_tickers = [d for d in os.listdir(backtest_data_path) 
+                          if os.path.isdir(os.path.join(backtest_data_path, d))]
+            # Filter to only complete tickers
+            complete_tickers = [ticker for ticker in all_tickers if is_symbol_complete(ticker)]
+            return sorted(complete_tickers)
         return []
     except Exception as e:
         print(f"Error loading tickers: {e}")
