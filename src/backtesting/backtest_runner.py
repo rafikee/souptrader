@@ -210,7 +210,7 @@ def check_body_size_filter(data_5min, index, body_sizes):
 
 
 def entry_signal_sma_alignment(data_5min, index, smma_21, smma_50, smma_200, 
-                                body_sizes, daily_smma_21, daily_smma_50, 
+                                body_sizes, daily_data, daily_smma_21, daily_smma_50, 
                                 daily_smma_200, filters):
     """
     Check entry signal for SMA alignment strategy with configurable filters.
@@ -246,10 +246,18 @@ def entry_signal_sma_alignment(data_5min, index, smma_21, smma_50, smma_200,
         if not check_sma_alignment(data_5min, prev_index, smma_21, smma_50, smma_200):
             return False
         # Daily SMA alignment (only if daily data is available)
-        if (daily_smma_21 is not None and daily_smma_50 is not None and daily_smma_200 is not None):
-            if (daily_smma_21.iloc[prev_index] <= daily_smma_50.iloc[prev_index] or 
-                daily_smma_50.iloc[prev_index] <= daily_smma_200.iloc[prev_index]):
-                return False
+        if (daily_data is not None and daily_smma_21 is not None and 
+            daily_smma_50 is not None and daily_smma_200 is not None):
+            # Get the date of the current 5Min candle
+            current_date = data_5min.iloc[prev_index]['timestamp'].normalize()
+            
+            # Find the matching daily bar by date
+            daily_mask = daily_data['timestamp'].dt.normalize() == current_date
+            if daily_mask.any():
+                daily_idx = daily_data[daily_mask].index[0]
+                if (daily_smma_21.iloc[daily_idx] <= daily_smma_50.iloc[daily_idx] or 
+                    daily_smma_50.iloc[daily_idx] <= daily_smma_200.iloc[daily_idx]):
+                    return False
     
     if filters.get('vwap_filter', False):
         if not check_vwap_filter(data_5min, index):
@@ -523,6 +531,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
             body_sizes = calculate_body_size(data_5min)
             
             # Daily SMAs - load actual daily data
+            daily_data = None
             try:
                 daily_data = load_bar_data(config.ticker, 'Daily')
                 log(f"Loaded daily data: {len(daily_data)} bars")
@@ -530,6 +539,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
                 if len(daily_data) < 200:
                     log(f"WARNING: Only {len(daily_data)} daily bars available, need 200 for daily SMA alignment. Skipping daily SMA filter.")
                     daily_smma_21 = daily_smma_50 = daily_smma_200 = None
+                    daily_data = None
                 else:
                     daily_smma_21 = calculate_smma(daily_data, 21)
                     daily_smma_50 = calculate_smma(daily_data, 50)
@@ -537,9 +547,11 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
             except FileNotFoundError:
                 log("WARNING: No daily data found, skipping daily SMA alignment filter")
                 daily_smma_21 = daily_smma_50 = daily_smma_200 = None
+                daily_data = None
             except ValueError as e:
                 log(f"WARNING: Cannot calculate daily SMAs: {e}")
                 daily_smma_21 = daily_smma_50 = daily_smma_200 = None
+                daily_data = None
             
             vwap = None
             rsi = None
@@ -551,6 +563,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
             
             smma_21 = smma_50 = smma_200 = None
             body_sizes = None
+            daily_data = None
             daily_smma_21 = daily_smma_50 = daily_smma_200 = None
         
         log("Indicators calculated, starting backtest...")
@@ -582,7 +595,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
             if config.strategy == 'sma_alignment':
                 entry_signal = entry_signal_sma_alignment(
                     data_5min, i, smma_21, smma_50, smma_200, body_sizes,
-                    daily_smma_21, daily_smma_50, daily_smma_200, config.filters
+                    daily_data, daily_smma_21, daily_smma_50, daily_smma_200, config.filters
                 )
             elif config.strategy == 'gap_breakout':
                 entry_signal = entry_signal_gap_breakout(
