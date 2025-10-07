@@ -86,7 +86,7 @@ def load_bar_data(ticker, timeframe='5Min'):
     
     Args:
         ticker (str): Stock symbol
-        timeframe (str): '5Min' or '1Min'
+        timeframe (str): '5Min' or 'Daily'
     
     Returns:
         pd.DataFrame: Concatenated bar data sorted by timestamp, filtered to RTH
@@ -237,10 +237,11 @@ def entry_signal_sma_alignment(data_5min, index, smma_21, smma_50, smma_200,
     if filters.get('sma_alignment', False):
         if not check_sma_alignment(data_5min, prev_index, smma_21, smma_50, smma_200):
             return False
-        # Daily SMA alignment
-        if (daily_smma_21.iloc[prev_index] <= daily_smma_50.iloc[prev_index] or 
-            daily_smma_50.iloc[prev_index] <= daily_smma_200.iloc[prev_index]):
-            return False
+        # Daily SMA alignment (only if daily data is available)
+        if (daily_smma_21 is not None and daily_smma_50 is not None and daily_smma_200 is not None):
+            if (daily_smma_21.iloc[prev_index] <= daily_smma_50.iloc[prev_index] or 
+                daily_smma_50.iloc[prev_index] <= daily_smma_200.iloc[prev_index]):
+                return False
     
     if filters.get('vwap_filter', False):
         if not check_vwap_filter(data_5min, index):
@@ -513,10 +514,16 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
             smma_200 = calculate_smma(data_5min, 200)
             body_sizes = calculate_body_size(data_5min)
             
-            # Daily SMAs
-            daily_smma_21 = calculate_smma(data_5min, 21 * 78)
-            daily_smma_50 = calculate_smma(data_5min, 50 * 78)
-            daily_smma_200 = calculate_smma(data_5min, 200 * 78)
+            # Daily SMAs - load actual daily data
+            try:
+                daily_data = load_bar_data(config.ticker, 'Daily')
+                daily_smma_21 = calculate_smma(daily_data, 21)
+                daily_smma_50 = calculate_smma(daily_data, 50)
+                daily_smma_200 = calculate_smma(daily_data, 200)
+                log(f"Loaded daily data: {len(daily_data)} bars")
+            except FileNotFoundError:
+                log("WARNING: No daily data found, skipping daily SMA alignment filter")
+                daily_smma_21 = daily_smma_50 = daily_smma_200 = None
             
             vwap = None
             rsi = None

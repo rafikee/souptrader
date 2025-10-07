@@ -2,7 +2,7 @@
 Databento NBBO 1s downloader
 
 Downloads consolidated NBBO 1-second data for a given symbol between
-2024-09-01 and 2025-08-31 from dataset "XNAS.ITCH" using schema "bbo-1s".
+2025-01-01 and 2025-12-31 from dataset "XNAS.ITCH" using schema "bbo-1s".
 Saves per-day Parquet files under 
 "data/backtest_data/{SYMBOL}/nbbo1s/YYYY-MM-DD.parquet".
 
@@ -42,8 +42,8 @@ except ImportError as e:
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 DATA_ROOT = os.path.join(PROJECT_ROOT, 'data', 'backtest_data')
 LOGS_DIR = os.path.join(PROJECT_ROOT, 'logs')
-START_DATE_STR = "2024-09-01"
-END_DATE_STR = "2025-08-31"
+START_DATE_STR = "2025-01-01"
+END_DATE_STR = "2025-12-31"
 DATASET = "XNAS.ITCH"
 SCHEMA = "bbo-1s"
 
@@ -231,6 +231,12 @@ def main() -> None:
 
     start = pd.Timestamp(START_DATE_STR, tz="UTC")
     end = pd.Timestamp(END_DATE_STR, tz="UTC")
+    
+    # Cap end date to today to avoid downloading future dates
+    today = pd.Timestamp.now(tz="UTC").normalize()
+    if end > today:
+        end = today
+        print(f"Note: End date capped to today ({today.date()})")
 
     client = get_client()
 
@@ -243,9 +249,9 @@ def main() -> None:
     output_lines = []
     output_lines.append(f"Starting NBBO download for symbol: {symbol}")
     output_lines.append(f"Force mode: {args.force}")
-    output_lines.append(f"Date range: {START_DATE_STR} to {END_DATE_STR}")
+    output_lines.append(f"Date range: {start.date()} to {end.date()} (capped to today)")
     output_lines.append(f"Total calendar days: {len(days)}")
-    output_lines.append(f"Trading days for progress: {len(trading_days_list)}")
+    output_lines.append(f"Expected trading days: {len(trading_days_list)}")
     output_lines.append("")
 
     # Pre-scan: if all expected daily files exist for the date range, skip this symbol entirely
@@ -296,19 +302,23 @@ def main() -> None:
         errors = [msg for msg, rows in results if msg.startswith("ERROR:")]
         no_data = [msg for msg, rows in results if msg.startswith("No data:")]
         
-        summary_msg = f"Completed: {ok_count}/{len(days)} calendar days ({ok_count}/{len(trading_days_list)} trading days), {total_rows:,} total rows"
+        # Calculate success percentage based on trading days
+        success_pct = (ok_count / len(trading_days_list) * 100) if len(trading_days_list) > 0 else 0
+        
+        summary_msg = f"✓ Downloaded: {ok_count}/{len(trading_days_list)} trading days ({success_pct:.1f}%), {total_rows:,} total rows"
         print(f"\n\n{summary_msg}")
         output_lines.append("")
         output_lines.append(summary_msg)
         
-        if errors:
-            error_msg = f"Errors: {len(errors)}"
-            print(error_msg)
-            output_lines.append(error_msg)
         if no_data:
-            no_data_msg = f"No data: {len(no_data)}"
+            no_data_msg = f"  • No data available: {len(no_data)} days (weekends/holidays or missing data)"
             print(no_data_msg)
             output_lines.append(no_data_msg)
+        
+        if errors:
+            error_msg = f"  ✗ API Errors: {len(errors)} days (rate limits or API failures)"
+            print(error_msg)
+            output_lines.append(error_msg)
 
     # Capture stdout from the async runner
     old_stdout = sys.stdout

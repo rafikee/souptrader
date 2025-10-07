@@ -11,6 +11,16 @@ import threading
 import json
 import time
 
+# Import shared validation utilities
+import sys
+from pathlib import Path
+# Add project root to path for imports
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from src.backtesting.data_validation import is_symbol_complete, get_validation_summary
+
 # Paths and constants
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_ROOT = os.path.join(PROJECT_ROOT, 'data', 'backtest_data')
@@ -25,57 +35,7 @@ END_DATE_STR = "2025-08-31"
 XNYS = xcals.get_calendar('XNYS')
 
 
-def month_range(start: pd.Timestamp, end: pd.Timestamp):
-    result = []
-    current = pd.Timestamp(year=start.year, month=start.month, day=1, tz="UTC")
-    end_month_start = pd.Timestamp(year=end.year, month=end.month, day=1, tz="UTC")
-    while current <= end_month_start:
-        next_month = (current + pd.offsets.MonthBegin(1))
-        month_end = min(end, next_month - pd.Timedelta(nanoseconds=1))
-        month_start = max(start, current)
-        result.append((month_start, month_end))
-        current = next_month
-    return result
-
-
-def daterange_days(start: pd.Timestamp, end: pd.Timestamp):
-    days = []
-    current = pd.Timestamp(year=start.year, month=start.month, day=start.day, tz="UTC")
-    last = pd.Timestamp(year=end.year, month=end.month, day=end.day, tz="UTC")
-    while current <= last:
-        days.append(current)
-        current = current + pd.Timedelta(days=1)
-    return days
-
-
-def trading_days(start: pd.Timestamp, end: pd.Timestamp):
-    # Use exchange calendar sessions (dates are session labels)
-    sessions = XNYS.sessions_in_range(start.tz_localize(None), end.tz_localize(None))
-    # Convert session labels to UTC midnight timestamps for filename formatting
-    return [pd.Timestamp(s).tz_localize('UTC') for s in sessions]
-
-
-def is_symbol_complete(symbol: str) -> bool:
-    sym = symbol.upper()
-    start = pd.Timestamp(START_DATE_STR, tz="UTC")
-    end = pd.Timestamp(END_DATE_STR + " 23:59:59", tz="UTC")
-
-    # Bars completeness for 1Min and 5Min per-month files
-    months = month_range(start, end)
-    for timeframe_str in ["1Min", "5Min"]:
-        out_dir = os.path.join(DATA_ROOT, sym, timeframe_str)
-        expected_files = [os.path.join(out_dir, f"{m_start.strftime('%Y-%m')}.parquet") for m_start, _ in months]
-        if not expected_files or not all(os.path.exists(p) for p in expected_files):
-            return False
-
-    # NBBO completeness for trading days only (matches downloader behavior)
-    days = trading_days(pd.Timestamp(START_DATE_STR, tz="UTC"), pd.Timestamp(END_DATE_STR, tz="UTC"))
-    nbbo_dir = os.path.join(DATA_ROOT, sym, "nbbo1s")
-    expected_daily = [os.path.join(nbbo_dir, f"{d.strftime('%Y-%m-%d')}.parquet") for d in days]
-    if not expected_daily or not all(os.path.exists(p) for p in expected_daily):
-        return False
-
-    return True
+# Validation functions now imported from src.backtesting.data_validation
 
 
 def load_downloaded_tickers():
@@ -129,16 +89,8 @@ def quick_cleanup_stale_tickers():
     valid_incomplete = []
     
     for symbol in filesystem_symbols:
-        symbol_path = os.path.join(DATA_ROOT, symbol)
-        required_subfolders = ['1Min', '5Min', 'nbbo1s']
-        
-        # Check if all required subfolders exist
-        has_all_subfolders = all(
-            os.path.isdir(os.path.join(symbol_path, subfolder)) 
-            for subfolder in required_subfolders
-        )
-        
-        if has_all_subfolders:
+        # Use the shared validation function
+        if is_symbol_complete(symbol):
             valid_complete.append(symbol)
         else:
             valid_incomplete.append(symbol)
@@ -302,12 +254,38 @@ def download_worker(symbol, force, api_key):
             bars_cmd.append('--force')
             nbbo_cmd.append('--force')
 
-        env = os.environ.copy()
-        env['MY_API_KEY'] = api_key
+        # Load environment variables from .env file
+        from dotenv import load_dotenv
+        env_file = os.path.join(PROJECT_ROOT, '.env')
+        load_dotenv(env_file)
         
-        print(f"Running bars download for {symbol}")
-        # Run bars download
+        env = os.environ.copy()
+        # Get both API credentials from environment (.env file)
+        alpaca_key_id = os.getenv('APCA_API_KEY_ID')
+        alpaca_secret = os.getenv('APCA_API_SECRET_KEY')
+        
+        print(f"DEBUG: alpaca_key_id found: {alpaca_key_id is not None}")
+        print(f"DEBUG: alpaca_secret found: {alpaca_secret is not None}")
+        
+        if alpaca_key_id:
+            env['APCA_API_KEY_ID'] = alpaca_key_id
+        elif api_key:
+            # Fallback to UI input if env var not found
+            env['APCA_API_KEY_ID'] = api_key
+        
+        if alpaca_secret:
+            env['APCA_API_SECRET_KEY'] = alpaca_secret
+        else:
+            print("WARNING: APCA_API_SECRET_KEY not found in environment")
+        
+        print(f"Running bars download for {symbol} (5Min + Daily)")
+        # Run bars download (both 5Min and Daily)
         bars_proc = subprocess.run(bars_cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, env=env)
+        
+        # Log the captured output for debugging
+        print(f"Bars download stdout: {bars_proc.stdout}")
+        print(f"Bars download stderr: {bars_proc.stderr}")
+        print(f"Bars download return code: {bars_proc.returncode}")
         
         if bars_proc.returncode != 0:
             error_msg = f"Bars download failed: {bars_proc.stderr.strip() or bars_proc.stdout.strip()}"
@@ -389,9 +367,8 @@ def create_layout():
                  children=get_status_message(status_data),
                  style={'textAlign': 'center', 'margin': '0 0 32px', 'minHeight': '26px'}),
 
-        html.H3("Tickers we already downloaded", style={'textAlign': 'center', 'margin': '0 0 14px'}),
-        html.Div(id='downloaded-tickers', children=render_ticker_list(downloaded),
-                 style={'maxWidth': '760px', 'margin': '0 auto 20px'}),
+        html.Div(id='downloaded-tickers', children=get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'),
+                 style={'maxWidth': '800px', 'margin': '0 auto 40px'}),
 
         html.Div(id='missing-tickers-section', 
                  children=get_missing_tickers_section(incomplete),
@@ -427,15 +404,57 @@ def get_status_message(status_data):
         return ""
 
 
-def get_missing_tickers_section(incomplete_tickers):
-    """Get the missing tickers section, only show if there are any."""
-    if not incomplete_tickers:
+def get_ticker_details_section(tickers, title, title_color='#2c3e50'):
+    """Get a section with detailed validation info for tickers."""
+    if not tickers:
         return html.Div()
     
+    # Get detailed validation info for each ticker
+    ticker_details = []
+    for ticker in tickers:
+        summary = get_validation_summary(ticker)
+        
+        # Create detail rows for this ticker
+        detail_html = html.Div([
+            html.Div([
+                html.Strong(ticker, style={'fontSize': '16px', 'color': '#2c3e50'}),
+                html.Div([
+                    html.Div([
+                        html.Span("5Min: ", style={'fontWeight': 'bold'}),
+                        html.Span(f"{summary['5Min']['found']} months", 
+                                 style={'color': '#e74c3c' if summary['5Min']['found'] == 0 else '#2c3e50'})
+                    ], style={'display': 'inline-block', 'marginRight': '15px'}),
+                    html.Div([
+                        html.Span("Daily: ", style={'fontWeight': 'bold'}),
+                        html.Span(f"{summary['Daily']['found']} months", 
+                                 style={'color': '#e74c3c' if summary['Daily']['found'] == 0 else '#2c3e50'})
+                    ], style={'display': 'inline-block', 'marginRight': '15px'}),
+                    html.Div([
+                        html.Span("NBBO: ", style={'fontWeight': 'bold'}),
+                        html.Span(f"{summary['NBBO']['found']} days", 
+                                 style={'color': '#e74c3c' if summary['NBBO']['found'] == 0 else '#2c3e50'})
+                    ], style={'display': 'inline-block'})
+                ], style={'fontSize': '14px', 'marginTop': '5px', 'color': '#555'})
+            ], style={
+                'padding': '12px',
+                'margin': '8px',
+                'backgroundColor': '#fff',
+                'borderRadius': '8px',
+                'border': '1px solid #e0e0e0',
+                'boxShadow': '0 1px 3px rgba(0,0,0,0.1)'
+            })
+        ])
+        ticker_details.append(detail_html)
+    
     return html.Div([
-        html.H3("Tickers missing data", style={'textAlign': 'center', 'margin': '0 0 14px', 'color': '#e74c3c'}),
-        render_ticker_list(incomplete_tickers, "None")
+        html.H3(title, style={'textAlign': 'center', 'margin': '0 0 14px', 'color': title_color}),
+        html.Div(ticker_details, style={'maxWidth': '800px', 'margin': '0 auto'})
     ])
+
+
+def get_missing_tickers_section(incomplete_tickers):
+    """Get the missing tickers section with detailed validation info."""
+    return get_ticker_details_section(incomplete_tickers, "Tickers with incomplete data", '#e74c3c')
 
 
 # Create the layout variable that Dash expects
@@ -457,14 +476,15 @@ layout = create_layout
 def handle_download(n_clicks, ticker, force_values, api_key):
     if not ticker or not str(ticker).strip():
         downloaded, incomplete = load_downloaded_tickers()
-        return "Please enter a ticker symbol.", render_ticker_list(downloaded), get_missing_tickers_section(incomplete), None, None
-    if not api_key or not str(api_key).strip():
-        downloaded, incomplete = load_downloaded_tickers()
-        return "Please enter your API key.", render_ticker_list(downloaded), get_missing_tickers_section(incomplete), None, None
+        return "Please enter a ticker symbol.", get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete), None, None
+    # API key is now optional - will use .env file if not provided
+    # if not api_key or not str(api_key).strip():
+    #     downloaded, incomplete = load_downloaded_tickers()
+    #     return "Please enter your API key.", get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete), None, None
 
     sym = str(ticker).strip().upper()
     force = 'force' in (force_values or [])
-    api_key_str = str(api_key).strip()
+    api_key_str = str(api_key).strip() if api_key else ""
 
     # Check if already downloading
     current_status = get_download_status()
@@ -480,7 +500,7 @@ def handle_download(n_clicks, ticker, force_values, api_key):
     # Return immediately and clear input fields
     status = f"Download started for {sym}. Status will update automatically."
     downloaded, incomplete = load_downloaded_tickers()
-    return status, render_ticker_list(downloaded), get_missing_tickers_section(incomplete), "", ""
+    return status, get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete), "", ""
 
 
 @dash.callback(
@@ -496,20 +516,20 @@ def update_status(n_intervals):
     downloaded, incomplete = load_downloaded_tickers()
     
     if status_data['status'] == 'idle':
-        return "", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
+        return "", get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete)
     elif status_data['status'] == 'downloading':
-        return f"Downloading {status_data['symbol']}... (started at {status_data['start_time']})", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
+        return f"Downloading {status_data['symbol']}... (started at {status_data['start_time']})", get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete)
     elif status_data['status'] == 'complete':
         # Clear status after showing completion and refresh ticker list
         update_download_status("idle")
         downloaded, incomplete = load_downloaded_tickers()  # Refresh in case new ticker was added
-        return f"Download completed for {status_data['symbol']}!", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
+        return f"Download completed for {status_data['symbol']}!", get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete)
     elif status_data['status'] == 'failed':
         # Clear status after showing error
         update_download_status("idle")
-        return f"Download failed for {status_data['symbol']}: {status_data['error']}", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
+        return f"Download failed for {status_data['symbol']}: {status_data['error']}", get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete)
     
-    return "", render_ticker_list(downloaded), get_missing_tickers_section(incomplete)
+    return "", get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete)
 
 
 @dash.callback(
@@ -522,7 +542,9 @@ def update_status(n_intervals):
 def validate_downloads(n_clicks):
     """Validate all downloads and update ticker lists."""
     if n_clicks == 0:
-        return html.Div(), html.Div(), ""
+        # Don't clear the UI on initial load - just return current state
+        downloaded, incomplete = load_downloaded_tickers()
+        return get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete), ""
     
     complete, incomplete = validate_all_tickers()
     
@@ -530,7 +552,7 @@ def validate_downloads(n_clicks):
     timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
     status_msg = f"Validation completed at {timestamp} - Found {len(complete)} complete and {len(incomplete)} incomplete tickers"
     
-    return render_ticker_list(complete), get_missing_tickers_section(incomplete), status_msg
+    return get_ticker_details_section(complete, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete), status_msg
 
 
 @dash.callback(
