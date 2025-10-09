@@ -62,8 +62,9 @@ def create_layout():
                     options=[
                         {'label': ' SMA Alignment (Momentum Continuation)', 'value': 'sma_alignment'},
                         {'label': ' Gap Breakout', 'value': 'gap_breakout'},
+                        {'label': ' EMA Momentum', 'value': 'ema_momentum'},
                     ],
-                    value='gap_breakout',
+                    value='ema_momentum',
                     style={'fontSize': '16px'},
                     labelStyle={'display': 'block', 'marginBottom': '8px'}
                 )
@@ -75,11 +76,20 @@ def create_layout():
                 dcc.Checklist(
                     id='filters-checklist',
                     options=[
+                        # Old filters
                         {'label': ' SMA Alignment Required (21>50>200)', 'value': 'sma_alignment'},
                         {'label': ' VWAP Filter (price above VWAP)', 'value': 'vwap_filter'},
                         {'label': ' RSI Filter (RSI > 55)', 'value': 'rsi_filter'},
                         {'label': ' Volume Confirmation (1.5x avg)', 'value': 'volume_confirmation'},
                         {'label': ' Body Size Filter (2x avg)', 'value': 'body_size'},
+                        # New EMA Momentum filters
+                        {'label': ' EMA Alignment (9>20>50)', 'value': 'ema_alignment'},
+                        {'label': ' 9EMA Close Above', 'value': 'ema_close_above'},
+                        {'label': ' 9EMA Breakout (opens under, closes above)', 'value': 'ema_breakout'},
+                        {'label': ' RSI > 51', 'value': 'rsi_threshold'},
+                        {'label': ' RSI Trending Up (RSI > RSI[1])', 'value': 'rsi_trending'},
+                        {'label': ' Volume Above Average', 'value': 'volume_above_avg'},
+                        {'label': ' Daily SMA Alignment (21>50>200 on Daily bars)', 'value': 'daily_sma_alignment'},
                     ],
                     value=[],
                     style={'fontSize': '14px'},
@@ -133,6 +143,90 @@ def create_layout():
                 
             ], style={'marginBottom': '30px'}),
             
+            # Entry & Trade Parameters
+            html.Div([
+                html.Label("Entry & Trade Parameters:", style={'fontWeight': 'bold', 'marginBottom': '10px', 'display': 'block'}),
+                
+                html.Div([
+                    html.Label("Max Trades Per Day:", style={'marginRight': '10px'}),
+                    dcc.Input(
+                        id='max-trades-input',
+                        type='number',
+                        value=1,
+                        step=1,
+                        min=1,
+                        max=10,
+                        style={'width': '80px'}
+                    ),
+                ], style={'marginBottom': '10px'}),
+                
+                html.Div([
+                    html.Label("Entry Method:", style={'marginRight': '10px'}),
+                    dcc.Dropdown(
+                        id='entry-method-dropdown',
+                        options=[
+                            {'label': 'Next 5Min Candle Open', 'value': '5min_next_candle'},
+                            {'label': 'First 1Min Bar After Signal', 'value': '1min_first_bar'},
+                        ],
+                        value='5min_next_candle',
+                        style={'width': '250px'}
+                    ),
+                ], style={'marginBottom': '10px'}),
+                
+                html.Div([
+                    html.Label("Entry Offset (%):", style={'marginRight': '10px'}),
+                    dcc.Input(
+                        id='entry-offset-input',
+                        type='number',
+                        value=0.1,
+                        step=0.05,
+                        min=0,
+                        max=1,
+                        style={'width': '80px'}
+                    ),
+                ], style={'marginBottom': '10px'}),
+                
+                html.Div([
+                    html.Label("Opening Range Bars (Gap Breakout):", style={'marginRight': '10px'}),
+                    dcc.Input(
+                        id='opening-range-bars-input',
+                        type='number',
+                        value=2,
+                        step=1,
+                        min=1,
+                        max=10,
+                        style={'width': '80px'}
+                    ),
+                ], style={'marginBottom': '10px'}),
+                
+                html.Div([
+                    html.Label("Volume Lookback Bars:", style={'marginRight': '10px'}),
+                    dcc.Input(
+                        id='volume-lookback-input',
+                        type='number',
+                        value=20,
+                        step=1,
+                        min=1,
+                        max=100,
+                        style={'width': '80px'}
+                    ),
+                ], style={'marginBottom': '10px'}),
+                
+                html.Div([
+                    html.Label("Volume Multiple:", style={'marginRight': '10px'}),
+                    dcc.Input(
+                        id='volume-multiple-input',
+                        type='number',
+                        value=1.5,
+                        step=0.1,
+                        min=1.0,
+                        max=5.0,
+                        style={'width': '80px'}
+                    ),
+                ], style={'marginBottom': '10px'}),
+                
+            ], style={'marginBottom': '30px'}),
+            
             # Run button
             html.Button(
                 'Run Backtest',
@@ -161,7 +255,7 @@ def create_layout():
             'backgroundColor': '#f8f9fa',
             'padding': '30px',
             'borderRadius': '10px',
-            'maxWidth': '700px',
+            'maxWidth': '800px',
             'margin': '0 auto',
             'border': '1px solid #dee2e6'
         }),
@@ -200,9 +294,17 @@ layout = create_layout
     State('stop-loss-input', 'value'),
     State('trailing-stop-input', 'value'),
     State('take-profit-input', 'value'),
+    State('max-trades-input', 'value'),
+    State('entry-method-dropdown', 'value'),
+    State('entry-offset-input', 'value'),
+    State('opening-range-bars-input', 'value'),
+    State('volume-lookback-input', 'value'),
+    State('volume-multiple-input', 'value'),
     prevent_initial_call=True
 )
-def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, trailing_stop, take_profit):
+def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, trailing_stop, take_profit,
+                          max_trades, entry_method, entry_offset, opening_range_bars, 
+                          volume_lookback, volume_multiple):
     # Validation
     if not ticker:
         return (html.P("⚠️ Please select a ticker first.", 
@@ -226,6 +328,7 @@ def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, traili
     stop_loss_pct = -1 * (stop_loss / 100)  # e.g., 0.5% -> -0.005
     trailing_stop_pct = trailing_stop / 100  # e.g., 0.25% -> 0.0025
     take_profit_pct = (take_profit / 100) if take_profit else None
+    entry_offset_pct = entry_offset / 100  # e.g., 0.1% -> 0.001
     
     # Create config
     config = BacktestConfig(
@@ -234,7 +337,13 @@ def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, traili
         filters=filters_dict,
         stop_loss_pct=stop_loss_pct,
         trailing_stop_pct=trailing_stop_pct,
-        take_profit_pct=take_profit_pct
+        take_profit_pct=take_profit_pct,
+        max_trades_per_day=max_trades,
+        entry_method=entry_method,
+        entry_offset_pct=entry_offset_pct,
+        opening_range_bars=opening_range_bars,
+        volume_lookback=volume_lookback,
+        volume_multiple=volume_multiple
     )
     
     # Run backtest

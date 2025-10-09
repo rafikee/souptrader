@@ -38,13 +38,21 @@ BACKTEST_DATA_PATH = PROJECT_ROOT / 'data' / 'backtest_data'
 class BacktestConfig:
     """Configuration for a backtest run"""
     def __init__(self, ticker, strategy, filters, stop_loss_pct, trailing_stop_pct, 
-                 take_profit_pct=None):
+                 take_profit_pct=None, max_trades_per_day=1, entry_method='5min_next_candle',
+                 entry_offset_pct=0.001, opening_range_bars=2, volume_lookback=20, 
+                 volume_multiple=1.5):
         self.ticker = ticker
-        self.strategy = strategy  # 'sma_alignment' or 'gap_breakout'
+        self.strategy = strategy  # 'sma_alignment', 'gap_breakout', or 'ema_momentum'
         self.filters = filters  # Dict of filter name -> enabled (bool)
         self.stop_loss_pct = stop_loss_pct  # e.g., -0.005 for -0.5%
         self.trailing_stop_pct = trailing_stop_pct  # e.g., 0.0025 for 0.25%
         self.take_profit_pct = take_profit_pct  # e.g., 0.01 for 1% or None
+        self.max_trades_per_day = max_trades_per_day  # Max number of trades per day
+        self.entry_method = entry_method  # '5min_next_candle' or '1min_first_bar'
+        self.entry_offset_pct = entry_offset_pct  # Entry price offset (e.g., 0.001 for 0.1%)
+        self.opening_range_bars = opening_range_bars  # Number of 5min bars for opening range
+        self.volume_lookback = volume_lookback  # Lookback bars for volume average
+        self.volume_multiple = volume_multiple  # Volume multiplier threshold
 
 
 class BacktestResults:
@@ -163,6 +171,11 @@ def calculate_smma(data, period, column='close'):
     return smma
 
 
+def calculate_ema(data, period, column='close'):
+    """Calculate Exponential Moving Average (EMA)"""
+    return data[column].ewm(span=period, adjust=False).mean()
+
+
 def calculate_rsi(data, period=14):
     """Calculate RSI"""
     delta = data['close'].diff()
@@ -207,6 +220,42 @@ def check_body_size_filter(data_5min, index, body_sizes):
         return False
     avg_body = body_sizes.iloc[index-3:index].mean()
     return body_sizes.iloc[index] >= (2 * avg_body)
+
+
+def check_ema_alignment(ema_9, ema_20, ema_50, index):
+    """Check if EMAs are aligned (9 > 20 > 50)"""
+    return (ema_9.iloc[index] > ema_20.iloc[index] > ema_50.iloc[index])
+
+
+def check_ema_close_above(data_5min, index, ema_9):
+    """Check if 5min bar closes above 9EMA"""
+    return data_5min.iloc[index]['close'] > ema_9.iloc[index]
+
+
+def check_ema_breakout(data_5min, index, ema_9):
+    """Check if bar opens under and closes above 9EMA"""
+    return (data_5min.iloc[index]['open'] < ema_9.iloc[index] and 
+            data_5min.iloc[index]['close'] > ema_9.iloc[index])
+
+
+def check_rsi_threshold(rsi, index, threshold=51):
+    """Check if RSI > threshold"""
+    return rsi.iloc[index] > threshold
+
+
+def check_rsi_trending_up(rsi, index):
+    """Check if RSI is trending up (RSI > RSI[1])"""
+    if index < 1:
+        return False
+    return rsi.iloc[index] > rsi.iloc[index - 1]
+
+
+def check_volume_above_average(data_5min, index, lookback_bars, volume_multiple):
+    """Check if bar volume > average of last X bars * multiplier"""
+    if index < lookback_bars:
+        return False
+    avg_volume = data_5min.iloc[index - lookback_bars:index]['volume'].mean()
+    return data_5min.iloc[index]['volume'] > (avg_volume * volume_multiple)
 
 
 def entry_signal_sma_alignment(data_5min, index, smma_21, smma_50, smma_200, 
@@ -270,7 +319,7 @@ def entry_signal_sma_alignment(data_5min, index, smma_21, smma_50, smma_200,
     return True
 
 
-def entry_signal_gap_breakout(data_5min, index, vwap, rsi, filters):
+def entry_signal_gap_breakout(data_5min, index, vwap, rsi, filters, opening_range_bars=2):
     """
     Check entry signal for gap breakout strategy with configurable filters.
     """
@@ -310,18 +359,19 @@ def entry_signal_gap_breakout(data_5min, index, vwap, rsi, filters):
             day_start_index = j + 1
             break
     
-    if day_start_index is None or day_start_index + 1 >= index:
+    if day_start_index is None or day_start_index + opening_range_bars - 1 >= index:
         return False
     
-    first_candle = data_5min.iloc[day_start_index]
-    second_candle = data_5min.iloc[day_start_index + 1]
+    # Get the first N candles for opening range (configurable)
+    opening_candles = data_5min.iloc[day_start_index:day_start_index + opening_range_bars]
     
-    # Both opening candles must be green
-    if (first_candle['close'] <= first_candle['open'] or 
-        second_candle['close'] <= second_candle['open']):
-        return False
+    # All opening candles must be green
+    for idx in range(len(opening_candles)):
+        candle = opening_candles.iloc[idx]
+        if candle['close'] <= candle['open']:
+            return False
     
-    opening_range_high = max(first_candle['high'], second_candle['high'])
+    opening_range_high = opening_candles['high'].max()
     
     # Break above opening range
     if current_row['close'] <= opening_range_high:
@@ -344,13 +394,121 @@ def entry_signal_gap_breakout(data_5min, index, vwap, rsi, filters):
     return True
 
 
+def entry_signal_ema_momentum(data_5min, index, ema_9, ema_20, ema_50, rsi, 
+                               daily_data, daily_smma_21, daily_smma_50, daily_smma_200,
+                               filters, volume_lookback, volume_multiple):
+    """
+    Check entry signal for EMA Momentum strategy with configurable filters.
+    
+    Args:
+        filters: Dict of filter name -> enabled (bool)
+        volume_lookback: Number of bars to look back for volume average
+        volume_multiple: Multiple for volume comparison
+    """
+    # Need minimum bars for indicators
+    min_bars = max(50, volume_lookback) if volume_lookback else 50
+    if index < min_bars:
+        return False
+    
+    # Current bar must be green
+    current_row = data_5min.iloc[index]
+    if current_row['close'] <= current_row['open']:
+        return False
+    
+    # Check all enabled filters
+    
+    # EMA Alignment: 9 > 20 > 50
+    if filters.get('ema_alignment', False):
+        if not check_ema_alignment(ema_9, ema_20, ema_50, index):
+            return False
+    
+    # 9EMA Close Above: bar closes above 9EMA
+    if filters.get('ema_close_above', False):
+        if not check_ema_close_above(data_5min, index, ema_9):
+            return False
+    
+    # 9EMA Breakout: bar opens under and closes above 9EMA
+    if filters.get('ema_breakout', False):
+        if not check_ema_breakout(data_5min, index, ema_9):
+            return False
+    
+    # RSI > 51
+    if filters.get('rsi_threshold', False):
+        if not check_rsi_threshold(rsi, index, threshold=51):
+            return False
+    
+    # RSI Trending Up: RSI > RSI[1]
+    if filters.get('rsi_trending', False):
+        if not check_rsi_trending_up(rsi, index):
+            return False
+    
+    # Volume Above Average
+    if filters.get('volume_above_avg', False):
+        if not check_volume_above_average(data_5min, index, volume_lookback, volume_multiple):
+            return False
+    
+    # Daily SMA Alignment: 21 > 50 > 200 on daily bars
+    if filters.get('daily_sma_alignment', False):
+        if (daily_data is None or daily_smma_21 is None or 
+            daily_smma_50 is None or daily_smma_200 is None):
+            return False  # Require daily data if filter is enabled
+        
+        # Get the date of the current 5Min candle
+        current_date = data_5min.iloc[index]['timestamp'].normalize()
+        
+        # Find the matching daily bar by date
+        daily_mask = daily_data['timestamp'].dt.normalize() == current_date
+        if daily_mask.any():
+            daily_idx = daily_data[daily_mask].index[0]
+            if (daily_smma_21.iloc[daily_idx] <= daily_smma_50.iloc[daily_idx] or 
+                daily_smma_50.iloc[daily_idx] <= daily_smma_200.iloc[daily_idx]):
+                return False
+        else:
+            return False  # No matching daily bar found
+    
+    return True
+
+
+def load_1min_data_for_day(ticker, trade_date):
+    """
+    Load 1-minute bar data for a specific trading day.
+    
+    Args:
+        ticker (str): Stock symbol
+        trade_date (datetime.date): Trading date
+    
+    Returns:
+        pd.DataFrame: 1Min bar data for that day
+    """
+    # 1Min data is stored monthly like 5Min data
+    date_str = trade_date.strftime('%Y-%m')
+    onemin_file = BACKTEST_DATA_PATH / ticker / '1Min' / f'{date_str}.parquet'
+    
+    if not onemin_file.exists():
+        raise FileNotFoundError(f"1Min data not found for {ticker} in {date_str}")
+    
+    df = pd.read_parquet(onemin_file)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    
+    # Filter to just the specific day
+    day_data = df[df['timestamp'].dt.date == trade_date].copy()
+    day_data = day_data.sort_values('timestamp').reset_index(drop=True)
+    
+    return day_data
+
+
 def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price, 
                              stop_loss_pct, trailing_stop_pct, take_profit_pct, 
-                             log_func):
+                             log_func, entry_method='5min_next_candle', entry_offset_pct=0.001,
+                             data_5min=None, signal_index=None):
     """
     Execute a trade using NBBO data for realistic entry/exit.
     
     Args:
+        entry_method: '5min_next_candle' or '1min_first_bar'
+        entry_offset_pct: Percentage offset for buy stop (e.g., 0.001 for 0.1%)
+        data_5min: 5min bar data (required for 5min_next_candle method)
+        signal_index: Index in 5min data where signal occurred
         log_func: Function to call for logging (takes a string message)
     
     Returns:
@@ -364,8 +522,37 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
         log_func(f"ERROR: {str(e)}")
         return None
     
-    # Calculate buy stop price (0.1% above signal price)
-    buy_stop_price = entry_signal_price * 1.001
+    # Calculate buy stop price based on entry method
+    if entry_method == '5min_next_candle':
+        # Use next 5min candle open + offset
+        if data_5min is None or signal_index is None or signal_index + 1 >= len(data_5min):
+            log_func(f"  ERROR: Cannot get next 5min candle")
+            return None
+        next_candle_open = data_5min.iloc[signal_index + 1]['open']
+        buy_stop_price = next_candle_open + (next_candle_open * entry_offset_pct)
+        log_func(f"  Entry method: Next 5min candle open (${next_candle_open:.2f}) + {entry_offset_pct*100:.2f}%")
+    
+    elif entry_method == '1min_first_bar':
+        # Load 1min data and find first bar after signal
+        try:
+            onemin_data = load_1min_data_for_day(ticker, trade_date)
+        except FileNotFoundError as e:
+            log_func(f"  ERROR: {str(e)}")
+            return None
+        
+        # Find first 1min bar after signal time
+        onemin_after_signal = onemin_data[onemin_data['timestamp'] > entry_signal_time]
+        if len(onemin_after_signal) == 0:
+            log_func(f"  ERROR: No 1min bars found after signal")
+            return None
+        
+        first_1min_bar = onemin_after_signal.iloc[0]
+        buy_stop_price = first_1min_bar['close'] + (first_1min_bar['close'] * entry_offset_pct)
+        log_func(f"  Entry method: First 1min bar close (${first_1min_bar['close']:.2f}) + {entry_offset_pct*100:.2f}%")
+    
+    else:
+        log_func(f"  ERROR: Unknown entry method: {entry_method}")
+        return None
     
     # Find entry point: look for NBBO tick where ask >= buy stop price
     # Start from the signal time onwards
@@ -555,6 +742,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
             
             vwap = None
             rsi = None
+            ema_9 = ema_20 = ema_50 = None
             
         elif config.strategy == 'gap_breakout':
             # Use VWAP from data if available
@@ -565,28 +753,65 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
             body_sizes = None
             daily_data = None
             daily_smma_21 = daily_smma_50 = daily_smma_200 = None
+            ema_9 = ema_20 = ema_50 = None
+            
+        elif config.strategy == 'ema_momentum':
+            # Calculate EMAs on 5min data
+            ema_9 = calculate_ema(data_5min, 9)
+            ema_20 = calculate_ema(data_5min, 20)
+            ema_50 = calculate_ema(data_5min, 50)
+            rsi = calculate_rsi(data_5min, 14)
+            
+            # Load daily data for daily SMA alignment filter
+            daily_data = None
+            daily_smma_21 = daily_smma_50 = daily_smma_200 = None
+            
+            if config.filters.get('daily_sma_alignment', False):
+                try:
+                    daily_data = load_bar_data(config.ticker, 'Daily')
+                    log(f"Loaded daily data: {len(daily_data)} bars")
+                    
+                    if len(daily_data) < 200:
+                        log(f"WARNING: Only {len(daily_data)} daily bars available, need 200 for daily SMA alignment. Skipping daily SMA filter.")
+                        daily_smma_21 = daily_smma_50 = daily_smma_200 = None
+                        daily_data = None
+                    else:
+                        daily_smma_21 = calculate_smma(daily_data, 21)
+                        daily_smma_50 = calculate_smma(daily_data, 50)
+                        daily_smma_200 = calculate_smma(daily_data, 200)
+                except FileNotFoundError:
+                    log("WARNING: No daily data found, skipping daily SMA alignment filter")
+                except ValueError as e:
+                    log(f"WARNING: Cannot calculate daily SMAs: {e}")
+            
+            smma_21 = smma_50 = smma_200 = None
+            body_sizes = None
+            vwap = None
         
         log("Indicators calculated, starting backtest...")
         
         # Track trades
         trades = []
-        daily_trades = {}
+        daily_trades = {}  # Dict of date -> trade count
         
         # Determine loop start
         if config.strategy == 'sma_alignment':
             loop_start = 200 * 78  # Need 200 days
+        elif config.strategy == 'ema_momentum':
+            loop_start = max(50, config.volume_lookback if config.volume_lookback else 50)
         else:
-            loop_start = 20 * 78  # Need 20 days for RSI
+            loop_start = 20 * 78  # Need 20 days for RSI (gap_breakout)
         
         log(f"Processing {len(data_5min) - loop_start} candles...")
+        log(f"Max trades per day: {config.max_trades_per_day}")
         
         # Main backtest loop
         for i in range(loop_start, len(data_5min) - 1):
             current_row = data_5min.iloc[i]
             current_date = current_row['timestamp'].date()
             
-            # Skip if already traded today
-            if current_date in daily_trades:
+            # Skip if already hit max trades for the day
+            if daily_trades.get(current_date, 0) >= config.max_trades_per_day:
                 continue
             
             # Check for entry signal
@@ -599,7 +824,13 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
                 )
             elif config.strategy == 'gap_breakout':
                 entry_signal = entry_signal_gap_breakout(
-                    data_5min, i, vwap, rsi, config.filters
+                    data_5min, i, vwap, rsi, config.filters, config.opening_range_bars
+                )
+            elif config.strategy == 'ema_momentum':
+                entry_signal = entry_signal_ema_momentum(
+                    data_5min, i, ema_9, ema_20, ema_50, rsi,
+                    daily_data, daily_smma_21, daily_smma_50, daily_smma_200,
+                    config.filters, config.volume_lookback, config.volume_multiple
                 )
             
             if entry_signal:
@@ -613,12 +844,16 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
                     config.stop_loss_pct,
                     config.trailing_stop_pct,
                     config.take_profit_pct,
-                    log
+                    log,
+                    entry_method=config.entry_method,
+                    entry_offset_pct=config.entry_offset_pct,
+                    data_5min=data_5min,
+                    signal_index=i
                 )
                 
                 if trade:
                     trades.append(trade)
-                    daily_trades[current_date] = True
+                    daily_trades[current_date] = daily_trades.get(current_date, 0) + 1
         
         # Calculate summary statistics
         results.trades = trades
