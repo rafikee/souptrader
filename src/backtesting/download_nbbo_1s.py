@@ -1,13 +1,15 @@
 """
 Databento NBBO 1s downloader
 
-Downloads consolidated NBBO 1-second data for a given symbol between
-2025-01-01 and 2025-12-31 from dataset "XNAS.ITCH" using schema "bbo-1s".
+Downloads consolidated NBBO 1-second data for a given symbol.
+Date ranges are configured in src/backtesting/download_config.yaml (uses trading_start_date
+to trading_end_date with no warmup offset).
+
 Saves per-day Parquet files under 
 "data/backtest_data/{SYMBOL}/nbbo1s/YYYY-MM-DD.parquet".
 
 Usage:
-  python -m src.data.download_nbbo_1s --symbol SMR
+  python -m src.backtesting.download_nbbo_1s --symbol SMR
 
 Notes:
 - Uses Databento Historical client (async with bounded concurrency).
@@ -16,13 +18,15 @@ Notes:
 - Reads DATABENTO_API_KEY from environment (.env supported).
 - Timestamps are UTC.
 - Requires MY_API_KEY in environment (.env supported via python-dotenv).
+- Date ranges configured in src/backtesting/download_config.yaml
 """
 
 import io
 import os
 import sys
 import argparse
-from typing import List, Optional
+import yaml
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import asyncio
 import warnings
@@ -42,13 +46,25 @@ except ImportError as e:
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 DATA_ROOT = os.path.join(PROJECT_ROOT, 'data', 'backtest_data')
 LOGS_DIR = os.path.join(PROJECT_ROOT, 'logs')
-START_DATE_STR = "2025-01-01"
-END_DATE_STR = "2025-12-31"
+# Config file is in the same directory as this script
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'download_config.yaml')
 DATASET = "XNAS.ITCH"
 SCHEMA = "bbo-1s"
 
 # Calendar for RTH filtering (match backtest_intraday)
 XNYS = xcals.get_calendar('XNYS')
+
+
+def load_config() -> Dict[str, Any]:
+    """Load download configuration from YAML file."""
+    if not os.path.exists(CONFIG_FILE):
+        print(f"Error: Config file not found at {CONFIG_FILE}")
+        sys.exit(1)
+    
+    with open(CONFIG_FILE, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    return config
 
 
 def parse_args() -> argparse.Namespace:
@@ -229,14 +245,29 @@ def main() -> None:
     args = parse_args()
     symbol = args.symbol.strip().upper()
 
-    start = pd.Timestamp(START_DATE_STR, tz="UTC")
-    end = pd.Timestamp(END_DATE_STR, tz="UTC")
+    # Load config and get date range
+    config = load_config()
+    trading_start = config['trading_start_date']
+    trading_end = config['trading_end_date']
     
-    # Cap end date to today to avoid downloading future dates
-    today = pd.Timestamp.now(tz="UTC").normalize()
-    if end > today:
-        end = today
-        print(f"Note: End date capped to today ({today.date()})")
+    # Parse dates
+    start = pd.Timestamp(trading_start, tz="UTC")
+    
+    # Handle "today" keyword for end date
+    if trading_end.lower() == "today":
+        end = pd.Timestamp.now(tz="UTC").normalize()
+    else:
+        end = pd.Timestamp(trading_end, tz="UTC")
+    
+    print("=" * 60)
+    print("NBBO Download Configuration")
+    print("=" * 60)
+    print(f"Trading Start Date: {config['trading_start_date']}")
+    print(f"Trading End Date: {config['trading_end_date']}")
+    print(f"Date Range: {start.date()} → {end.date()}")
+    print(f"Note: NBBO uses trading dates directly (no warmup offset)")
+    print("=" * 60)
+    print()
 
     client = get_client()
 

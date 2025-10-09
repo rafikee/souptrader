@@ -1,8 +1,12 @@
 """
 Alpaca historical bars downloader
 
-Downloads split-adjusted 5-minute and daily bars for given symbols between
-2024-01-01 and 2025-12-31 and stores them as monthly Parquet files under
+Downloads split-adjusted 1-minute, 5-minute and daily bars for given symbols.
+Date ranges are configured in src/backtesting/download_config.yaml and automatically
+calculated based on warmup periods needed for indicators.
+
+Stores data as monthly Parquet files under:
+"data/backtest_data/{SYMBOL}/1Min/YYYY-MM.parquet",
 "data/backtest_data/{SYMBOL}/5Min/YYYY-MM.parquet" and
 "data/backtest_data/{SYMBOL}/Daily/YYYY-MM.parquet".
 
@@ -14,14 +18,16 @@ Notes:
 - Saves all trading/non-trading hours (no filtering); timestamps are UTC.
 - Skips downloading a month if the target file already exists (idempotent).
 - Requires APCA_API_KEY_ID and APCA_API_SECRET_KEY in environment (.env supported via python-dotenv).
+- Date ranges configured in src/backtesting/download_config.yaml
 """
 
 import io
 import os
 import sys
 import argparse
+import yaml
 from datetime import datetime, timedelta
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 
 import pandas as pd
 from dotenv import load_dotenv, dotenv_values
@@ -34,12 +40,66 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 DATA_ROOT = os.path.join(PROJECT_ROOT, 'data', 'backtest_data')
 LOGS_DIR = os.path.join(PROJECT_ROOT, 'logs')
-START_DATE_STR = "2024-01-01"
-END_DATE_STR = "2025-12-31"
+# Config file is in the same directory as this script
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'download_config.yaml')
+
+
+def load_config() -> Dict[str, Any]:
+    """Load download configuration from YAML file."""
+    if not os.path.exists(CONFIG_FILE):
+        print(f"Error: Config file not found at {CONFIG_FILE}")
+        sys.exit(1)
+    
+    with open(CONFIG_FILE, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    return config
+
+
+def get_date_ranges(config: Dict[str, Any]) -> Dict[str, Tuple[pd.Timestamp, pd.Timestamp]]:
+    """
+    Calculate appropriate start/end dates for each timeframe based on config.
+    
+    Returns dict with keys: 'daily', '5min', '1min'
+    Each value is a tuple of (start_date, end_date) as pd.Timestamp
+    """
+    trading_start = config['trading_start_date']
+    trading_end = config['trading_end_date']
+    warmup_periods = config['warmup_periods']
+    
+    # Parse trading_start_date
+    start_ts = pd.Timestamp(trading_start, tz="UTC")
+    
+    # Parse trading_end_date (handle "today" keyword)
+    if trading_end.lower() == "today":
+        end_ts = pd.Timestamp.now(tz="UTC").normalize()
+    else:
+        end_ts = pd.Timestamp(trading_end + " 23:59:59", tz="UTC")
+    
+    # Calculate offsets for warmup periods
+    # Daily: 200 trading days ≈ 285 calendar days (assuming ~70% market days)
+    daily_offset_days = int(warmup_periods * 1.43)  # 200 * 1.43 ≈ 286 days
+    
+    # 5Min: 200 periods ≈ 2.5 trading days ≈ 3 calendar days (to be safe)
+    fivemin_offset_days = 3
+    
+    # 1Min: 200 periods ≈ 0.5 trading days ≈ 1 calendar day (to be safe)
+    onemin_offset_days = 1
+    
+    # Calculate start dates
+    daily_start = start_ts - pd.Timedelta(days=daily_offset_days)
+    fivemin_start = start_ts - pd.Timedelta(days=fivemin_offset_days)
+    onemin_start = start_ts - pd.Timedelta(days=onemin_offset_days)
+    
+    return {
+        'daily': (daily_start, end_ts),
+        '5min': (fivemin_start, end_ts),
+        '1min': (onemin_start, end_ts),
+    }
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download Alpaca historical 5Min and Daily bars to Parquet")
+    parser = argparse.ArgumentParser(description="Download Alpaca historical 1Min, 5Min and Daily bars to Parquet")
     parser.add_argument(
         "--symbols",
         required=True,
@@ -171,66 +231,135 @@ def main():
     # Initialize client
     client = StockHistoricalDataClient(api_key=api_key, secret_key=secret_key)
     
-    # Date range
-    start = pd.Timestamp(START_DATE_STR, tz="UTC")
-    # Inclusive end date: set to end of day UTC
-    end = pd.Timestamp(END_DATE_STR + " 23:59:59", tz="UTC")
+    # Load config and calculate date ranges
+    config = load_config()
+    date_ranges = get_date_ranges(config)
     
-    # Cap end date to today to avoid downloading future months
-    today = pd.Timestamp.now(tz="UTC").normalize()
-    if end > today:
-        end = today
-        print(f"Note: End date capped to today ({today.date()})")
-    
-    print(f"Downloading 5Min and Daily bars from {start.date()} to {end.date()}")
+    print("=" * 60)
+    print("Download Configuration")
+    print("=" * 60)
+    print(f"Trading Start Date: {config['trading_start_date']}")
+    print(f"Trading End Date: {config['trading_end_date']}")
+    print(f"Warmup Periods: {config['warmup_periods']}")
+    print()
+    print("Calculated Download Ranges:")
+    print(f"  Daily bars:  {date_ranges['daily'][0].date()} → {date_ranges['daily'][1].date()}")
+    print(f"  5Min bars:   {date_ranges['5min'][0].date()} → {date_ranges['5min'][1].date()}")
+    print(f"  1Min bars:   {date_ranges['1min'][0].date()} → {date_ranges['1min'][1].date()}")
+    print()
     print(f"Symbols: {', '.join(symbols)}")
     print(f"Force: {args.force}")
+    print("=" * 60)
     print()
     
     # Process each symbol
     for i, symbol in enumerate(symbols):
         print(f"Processing {symbol} ({i+1}/{len(symbols)})")
         
-        # Get month ranges
-        months = month_range(start, end)
-        total_months = len(months)
+        # Download 1Min bars
+        print(f"  Downloading 1Min bars...")
+        onemin_start, onemin_end = date_ranges['1min']
+        months_1min = month_range(onemin_start, onemin_end)
+        total_months_1min = len(months_1min)
+        success_1min = 0
+        errors_1min = 0
+        
+        # Initialize log for this timeframe
+        if i == 0:  # First symbol starts new session
+            log_bars_output(symbol, "1Min", args.force, [f"Starting 1Min bars download for {symbol}"], is_new_session=True)
+        
+        for month_idx, (month_start, month_end) in enumerate(months_1min, 1):
+            try:
+                if download_month_bars(client, symbol, TimeFrame(1, TimeFrameUnit.Minute), "1Min", month_start, month_end, args.force):
+                    success_1min += 1
+                    status = "✓"
+                else:
+                    status = "○"
+            except Exception as e:
+                errors_1min += 1
+                status = "✗"
+                print(f"    Error downloading {symbol} 1Min {month_start.strftime('%Y-%m')}: {e}")
+            
+            # Log progress after each month
+            pct = (month_idx / total_months_1min * 100) if total_months_1min > 0 else 0
+            progress_msg = f"Progress: {month_idx}/{total_months_1min} months ({pct:.1f}%) | {success_1min} success, {errors_1min} errors | Latest: {status} {month_start.strftime('%Y-%m')}"
+            log_bars_output(symbol, "1Min", args.force, [progress_msg], is_new_session=False)
+        
+        pct_1min = (success_1min / total_months_1min * 100) if total_months_1min > 0 else 0
+        print(f"    ✓ 1Min: {success_1min}/{total_months_1min} months ({pct_1min:.1f}%)" + (f" | {errors_1min} errors" if errors_1min > 0 else ""))
         
         # Download 5Min bars
         print(f"  Downloading 5Min bars...")
+        fivemin_start, fivemin_end = date_ranges['5min']
+        months_5min = month_range(fivemin_start, fivemin_end)
+        total_months_5min = len(months_5min)
         success_5min = 0
         errors_5min = 0
-        for month_start, month_end in months:
+        
+        # Initialize log for this timeframe
+        if i == 0:  # First symbol starts new session
+            log_bars_output(symbol, "5Min", args.force, [f"Starting 5Min bars download for {symbol}"], is_new_session=True)
+        
+        for month_idx, (month_start, month_end) in enumerate(months_5min, 1):
             try:
                 if download_month_bars(client, symbol, TimeFrame(5, TimeFrameUnit.Minute), "5Min", month_start, month_end, args.force):
                     success_5min += 1
+                    status = "✓"
+                else:
+                    status = "○"
             except Exception as e:
                 errors_5min += 1
+                status = "✗"
                 print(f"    Error downloading {symbol} 5Min {month_start.strftime('%Y-%m')}: {e}")
+            
+            # Log progress after each month
+            pct = (month_idx / total_months_5min * 100) if total_months_5min > 0 else 0
+            progress_msg = f"Progress: {month_idx}/{total_months_5min} months ({pct:.1f}%) | {success_5min} success, {errors_5min} errors | Latest: {status} {month_start.strftime('%Y-%m')}"
+            log_bars_output(symbol, "5Min", args.force, [progress_msg], is_new_session=False)
         
-        pct_5min = (success_5min / total_months * 100) if total_months > 0 else 0
-        print(f"    ✓ 5Min: {success_5min}/{total_months} months ({pct_5min:.1f}%)" + (f" | {errors_5min} errors" if errors_5min > 0 else ""))
+        pct_5min = (success_5min / total_months_5min * 100) if total_months_5min > 0 else 0
+        print(f"    ✓ 5Min: {success_5min}/{total_months_5min} months ({pct_5min:.1f}%)" + (f" | {errors_5min} errors" if errors_5min > 0 else ""))
         
         # Download Daily bars
         print(f"  Downloading Daily bars...")
+        daily_start, daily_end = date_ranges['daily']
+        months_daily = month_range(daily_start, daily_end)
+        total_months_daily = len(months_daily)
         success_daily = 0
         errors_daily = 0
-        for month_start, month_end in months:
+        
+        # Initialize log for this timeframe
+        if i == 0:  # First symbol starts new session
+            log_bars_output(symbol, "Daily", args.force, [f"Starting Daily bars download for {symbol}"], is_new_session=True)
+        
+        for month_idx, (month_start, month_end) in enumerate(months_daily, 1):
             try:
                 if download_month_bars(client, symbol, TimeFrame(1, TimeFrameUnit.Day), "Daily", month_start, month_end, args.force):
                     success_daily += 1
+                    status = "✓"
+                else:
+                    status = "○"
             except Exception as e:
                 errors_daily += 1
+                status = "✗"
                 print(f"    Error downloading {symbol} Daily {month_start.strftime('%Y-%m')}: {e}")
+            
+            # Log progress after each month
+            pct = (month_idx / total_months_daily * 100) if total_months_daily > 0 else 0
+            progress_msg = f"Progress: {month_idx}/{total_months_daily} months ({pct:.1f}%) | {success_daily} success, {errors_daily} errors | Latest: {status} {month_start.strftime('%Y-%m')}"
+            log_bars_output(symbol, "Daily", args.force, [progress_msg], is_new_session=False)
         
-        pct_daily = (success_daily / total_months * 100) if total_months > 0 else 0
-        print(f"    ✓ Daily: {success_daily}/{total_months} months ({pct_daily:.1f}%)" + (f" | {errors_daily} errors" if errors_daily > 0 else ""))
-        print(f"  Completed {symbol}: 5Min({success_5min}/{total_months}) Daily({success_daily}/{total_months})")
+        pct_daily = (success_daily / total_months_daily * 100) if total_months_daily > 0 else 0
+        print(f"    ✓ Daily: {success_daily}/{total_months_daily} months ({pct_daily:.1f}%)" + (f" | {errors_daily} errors" if errors_daily > 0 else ""))
+        print(f"  Completed {symbol}: 1Min({success_1min}/{total_months_1min}) 5Min({success_5min}/{total_months_5min}) Daily({success_daily}/{total_months_daily})")
         
-        # Log the results
-        log_5min_msg = f"✓ Downloaded: {success_5min}/{total_months} months ({pct_5min:.1f}%)" + (f" | {errors_5min} errors" if errors_5min > 0 else "")
-        log_daily_msg = f"✓ Downloaded: {success_daily}/{total_months} months ({pct_daily:.1f}%)" + (f" | {errors_daily} errors" if errors_daily > 0 else "")
-        log_bars_output(symbol, "5Min", args.force, [log_5min_msg], i == 0)
-        log_bars_output(symbol, "Daily", args.force, [log_daily_msg], i == 0)
+        # Log final summary for each timeframe
+        log_1min_msg = f"FINAL SUMMARY: {success_1min}/{total_months_1min} months ({pct_1min:.1f}%)" + (f" | {errors_1min} errors" if errors_1min > 0 else "")
+        log_5min_msg = f"FINAL SUMMARY: {success_5min}/{total_months_5min} months ({pct_5min:.1f}%)" + (f" | {errors_5min} errors" if errors_5min > 0 else "")
+        log_daily_msg = f"FINAL SUMMARY: {success_daily}/{total_months_daily} months ({pct_daily:.1f}%)" + (f" | {errors_daily} errors" if errors_daily > 0 else "")
+        log_bars_output(symbol, "1Min", args.force, [log_1min_msg], is_new_session=False)
+        log_bars_output(symbol, "5Min", args.force, [log_5min_msg], is_new_session=False)
+        log_bars_output(symbol, "Daily", args.force, [log_daily_msg], is_new_session=False)
         print()
     
     print("Download completed!")

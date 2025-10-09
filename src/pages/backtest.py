@@ -17,7 +17,7 @@ sys.path.insert(0, PROJECT_ROOT)
 from src.backtesting.data_validation import is_symbol_complete
 
 def load_tickers():
-    """Load only complete tickers with all required data (5Min, Daily, NBBO)"""
+    """Load only complete tickers with all required data (1Min, 5Min, Daily, NBBO)"""
     backtest_data_path = os.path.join(PROJECT_ROOT, 'data', 'backtest_data')
     try:
         if os.path.exists(backtest_data_path):

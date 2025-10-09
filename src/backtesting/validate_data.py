@@ -2,7 +2,7 @@
 Data validation script
 
 Validates that the required data structure exists for backtesting.
-Checks for 5Min, Daily, and NBBO data for each ticker with detailed reporting.
+Checks for 1Min, 5Min, Daily, and NBBO data for each ticker with detailed reporting.
 
 Usage:
   python -m src.backtesting.validate_data
@@ -40,6 +40,15 @@ def validate_ticker_data(ticker):
     print(f"Bars date range: {BARS_START_DATE_STR} to {bars_end.date()} (capped to today)")
     print(f"NBBO date range: {NBBO_START_DATE_STR} to {nbbo_end.date()} (capped to today)")
     print()
+    
+    # 1Min bars
+    info_1min = summary['1Min']
+    status_1min = "✅" if info_1min['is_complete'] else "❌"
+    print(f"{status_1min} 1Min bars: {info_1min['found']} months")
+    if not info_1min['is_complete'] and info_1min['missing']:
+        missing_display = info_1min['missing'][:5]  # Show first 5
+        more_count = len(info_1min['missing']) - 5
+        print(f"   Missing: {', '.join(missing_display)}" + (f" ... and {more_count} more" if more_count > 0 else ""))
     
     # 5Min bars
     info_5min = summary['5Min']

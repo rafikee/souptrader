@@ -121,10 +121,16 @@ def is_symbol_complete(symbol: str) -> bool:
     Check if a symbol has complete data for backtesting.
     
     Returns True only if all required data is present:
-    - 5Min bars (all months up to today)
-    - Daily bars (all months up to today)
-    - NBBO 1s data (all days up to today)
+    - 1Min bars (at least 1 file)
+    - 5Min bars (at least 1 file)
+    - Daily bars (at least 1 file)
+    - NBBO 1s data (at least 1 file)
     """
+    # Check 1Min bars
+    is_1min_complete, _, _, _ = validate_monthly_data(symbol, '1Min')
+    if not is_1min_complete:
+        return False
+    
     # Check 5Min bars
     is_5min_complete, _, _, _ = validate_monthly_data(symbol, '5Min')
     if not is_5min_complete:
@@ -150,6 +156,9 @@ def get_validation_summary(symbol: str) -> dict:
     Returns:
         Dictionary with validation details for each data type
     """
+    # Validate 1Min
+    is_1min_complete, found_1min, expected_1min, missing_1min = validate_monthly_data(symbol, '1Min')
+    
     # Validate 5Min
     is_5min_complete, found_5min, expected_5min, missing_5min = validate_monthly_data(symbol, '5Min')
     
@@ -161,7 +170,14 @@ def get_validation_summary(symbol: str) -> dict:
     
     return {
         'symbol': symbol,
-        'is_complete': is_5min_complete and is_daily_complete and is_nbbo_complete,
+        'is_complete': is_1min_complete and is_5min_complete and is_daily_complete and is_nbbo_complete,
+        '1Min': {
+            'is_complete': is_1min_complete,
+            'found': found_1min,
+            'expected': expected_1min,
+            'missing': missing_1min,
+            'percentage': (found_1min / expected_1min * 100) if expected_1min > 0 else 0
+        },
         '5Min': {
             'is_complete': is_5min_complete,
             'found': found_5min,

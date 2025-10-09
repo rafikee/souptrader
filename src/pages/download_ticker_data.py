@@ -334,8 +334,8 @@ def create_layout():
 
         html.Div([
             html.Div([
-                html.Label('Ticker', style={'fontWeight': '600', 'marginBottom': '8px', 'display': 'block'}),
-                dcc.Input(id='ticker-input', type='text', placeholder='Enter ticker (e.g., AAPL)', debounce=True,
+                html.Label('Ticker(s)', style={'fontWeight': '600', 'marginBottom': '8px', 'display': 'block'}),
+                dcc.Input(id='ticker-input', type='text', placeholder='Enter ticker(s) (e.g., AAPL or SMR, MVST, ASTS)', debounce=True,
                           style={'width': '100%', 'maxWidth': '100%', 'padding': '12px 14px', 'borderRadius': '8px', 'boxSizing': 'border-box'})
             ]),
 
@@ -420,6 +420,11 @@ def get_ticker_details_section(tickers, title, title_color='#2c3e50'):
                 html.Strong(ticker, style={'fontSize': '16px', 'color': '#2c3e50'}),
                 html.Div([
                     html.Div([
+                        html.Span("1Min: ", style={'fontWeight': 'bold'}),
+                        html.Span(f"{summary['1Min']['found']} months", 
+                                 style={'color': '#e74c3c' if summary['1Min']['found'] == 0 else '#2c3e50'})
+                    ], style={'display': 'inline-block', 'marginRight': '15px'}),
+                    html.Div([
                         html.Span("5Min: ", style={'fontWeight': 'bold'}),
                         html.Span(f"{summary['5Min']['found']} months", 
                                  style={'color': '#e74c3c' if summary['5Min']['found'] == 0 else '#2c3e50'})
@@ -482,7 +487,13 @@ def handle_download(n_clicks, ticker, force_values, api_key):
     #     downloaded, incomplete = load_downloaded_tickers()
     #     return "Please enter your API key.", get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete), None, None
 
-    sym = str(ticker).strip().upper()
+    # Split tickers by comma to support multiple symbols
+    symbols = [s.strip().upper() for s in str(ticker).split(",") if s.strip()]
+    
+    if not symbols:
+        downloaded, incomplete = load_downloaded_tickers()
+        return "Please enter valid ticker symbol(s).", get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete), None, None
+    
     force = 'force' in (force_values or [])
     api_key_str = str(api_key).strip() if api_key else ""
 
@@ -492,13 +503,25 @@ def handle_download(n_clicks, ticker, force_values, api_key):
         downloaded, incomplete = load_downloaded_tickers()
         return f"Download already in progress for {current_status['symbol']}. Please wait.", render_ticker_list(downloaded), get_missing_tickers_section(incomplete), None, None
 
-    # Start background download
-    thread = threading.Thread(target=download_worker, args=(sym, force, api_key_str))
+    # Start background download for each symbol
+    # We use a simple sequential approach with delays to avoid race conditions
+    def download_all_symbols():
+        import time
+        for sym in symbols:
+            download_worker(sym, force, api_key_str)
+            # Small delay between symbols to ensure proper status tracking
+            if sym != symbols[-1]:  # Don't delay after the last one
+                time.sleep(1)
+    
+    thread = threading.Thread(target=download_all_symbols)
     thread.daemon = True
     thread.start()
 
     # Return immediately and clear input fields
-    status = f"Download started for {sym}. Status will update automatically."
+    if len(symbols) == 1:
+        status = f"Download started for {symbols[0]}. Status will update automatically."
+    else:
+        status = f"Download started for {len(symbols)} symbols: {', '.join(symbols)}. Status will update automatically."
     downloaded, incomplete = load_downloaded_tickers()
     return status, get_ticker_details_section(downloaded, "Tickers already downloaded", '#27ae60'), get_missing_tickers_section(incomplete), "", ""
 

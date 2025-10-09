@@ -1,0 +1,16 @@
+# Download Configuration
+# This file defines the date ranges for downloading historical market data
+
+# Trading period - the actual period you want to backtest/trade
+trading_start_date: "2025-01-01"  # Start of your trading/backtest period
+trading_end_date: "today"          # End date (use "today" for current date, or specific date like "2025-12-31")
+
+# Warmup period for indicators (e.g., SMMA 200 requires 200 periods)
+warmup_periods: 200
+
+# Approximate offsets (automatically calculated by scripts):
+# - Daily bars: ~10 months before trading_start_date (200 trading days ≈ 285 calendar days)
+# - 5Min bars: ~3 calendar days before trading_start_date (200 periods ≈ 2.5 trading days)
+# - 1Min bars: ~1 calendar day before trading_start_date (200 periods ≈ 0.5 trading days)
+# - NBBO 1s: No warmup needed, starts at trading_start_date
+
