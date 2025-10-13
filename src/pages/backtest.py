@@ -187,13 +187,13 @@ def create_layout():
                 ], style={'marginBottom': '10px'}),
                 
                 html.Div([
-                    html.Label("Opening Range Bars (Gap Breakout):", style={'marginRight': '10px'}),
+                    html.Label("Opening Range Bars (0 = disabled):", style={'marginRight': '10px'}),
                     dcc.Input(
                         id='opening-range-bars-input',
                         type='number',
-                        value=2,
+                        value=0,
                         step=1,
-                        min=1,
+                        min=0,
                         max=10,
                         style={'width': '80px'}
                     ),

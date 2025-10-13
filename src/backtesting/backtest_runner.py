@@ -258,6 +258,48 @@ def check_volume_above_average(data_5min, index, lookback_bars, volume_multiple)
     return data_5min.iloc[index]['volume'] > (avg_volume * volume_multiple)
 
 
+def check_opening_range_breakout(data_5min, index, opening_range_bars):
+    """
+    Check if current price is above the opening range high.
+    
+    Args:
+        data_5min: 5-minute OHLCV data
+        index: Current candle index
+        opening_range_bars: Number of 5-minute bars for opening range (0 = disabled)
+    
+    Returns:
+        bool: True if above opening range high (or filter disabled)
+    """
+    if opening_range_bars == 0:
+        return True  # Filter disabled
+    
+    current_row = data_5min.iloc[index]
+    current_time = current_row['timestamp']
+    et_time = current_time.tz_convert('US/Eastern')
+    
+    # Find the start of the current day
+    day_start_index = None
+    for j in range(index, -1, -1):
+        candle_time = data_5min.iloc[j]['timestamp'].tz_convert('US/Eastern')
+        if candle_time.date() < et_time.date():
+            day_start_index = j + 1
+            break
+    
+    if day_start_index is None:
+        return False  # Not enough data
+    
+    # Check if we have enough bars
+    if day_start_index + opening_range_bars > index:
+        return False  # Still within opening range period
+    
+    # Get the opening range candles
+    opening_candles = data_5min.iloc[day_start_index:day_start_index + opening_range_bars]
+    opening_range_high = opening_candles['high'].max()
+    
+    # Current price must be above opening range high
+    return current_row['close'] > opening_range_high
+
+
 def entry_signal_sma_alignment(data_5min, index, smma_21, smma_50, smma_200, 
                                 body_sizes, daily_data, daily_smma_21, daily_smma_50, 
                                 daily_smma_200, filters):
@@ -396,7 +438,7 @@ def entry_signal_gap_breakout(data_5min, index, vwap, rsi, filters, opening_rang
 
 def entry_signal_ema_momentum(data_5min, index, ema_9, ema_20, ema_50, rsi, 
                                daily_data, daily_smma_21, daily_smma_50, daily_smma_200,
-                               filters, volume_lookback, volume_multiple):
+                               filters, volume_lookback, volume_multiple, opening_range_bars=0):
     """
     Check entry signal for EMA Momentum strategy with configurable filters.
     
@@ -404,6 +446,7 @@ def entry_signal_ema_momentum(data_5min, index, ema_9, ema_20, ema_50, rsi,
         filters: Dict of filter name -> enabled (bool)
         volume_lookback: Number of bars to look back for volume average
         volume_multiple: Multiple for volume comparison
+        opening_range_bars: Number of 5min bars for opening range (0 = disabled)
     """
     # Need minimum bars for indicators
     min_bars = max(50, volume_lookback) if volume_lookback else 50
@@ -465,6 +508,11 @@ def entry_signal_ema_momentum(data_5min, index, ema_9, ema_20, ema_50, rsi,
                 return False
         else:
             return False  # No matching daily bar found
+    
+    # Opening Range Breakout: price must be above opening range high
+    if opening_range_bars > 0:
+        if not check_opening_range_breakout(data_5min, index, opening_range_bars):
+            return False
     
     return True
 
@@ -830,7 +878,8 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
                 entry_signal = entry_signal_ema_momentum(
                     data_5min, i, ema_9, ema_20, ema_50, rsi,
                     daily_data, daily_smma_21, daily_smma_50, daily_smma_200,
-                    config.filters, config.volume_lookback, config.volume_multiple
+                    config.filters, config.volume_lookback, config.volume_multiple,
+                    config.opening_range_bars
                 )
             
             if entry_signal:
