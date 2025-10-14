@@ -225,6 +225,20 @@ def create_layout():
                     ),
                 ], style={'marginBottom': '10px'}),
                 
+                html.Div([
+                    html.Label("1-Min Confirmation:", style={'marginRight': '10px'}),
+                    dcc.Dropdown(
+                        id='confirmation-bar-dropdown',
+                        options=[
+                            {'label': 'None (Disabled)', 'value': 'none'},
+                            {'label': '1-Min Close ≥ 5-Min High', 'value': 'high'},
+                            {'label': '1-Min Close ≥ 5-Min Close', 'value': 'close'},
+                        ],
+                        value='none',
+                        style={'width': '280px'}
+                    ),
+                ], style={'marginBottom': '10px'}),
+                
             ], style={'marginBottom': '30px'}),
             
             # Run button
@@ -300,11 +314,12 @@ layout = create_layout
     State('opening-range-bars-input', 'value'),
     State('volume-lookback-input', 'value'),
     State('volume-multiple-input', 'value'),
+    State('confirmation-bar-dropdown', 'value'),
     prevent_initial_call=True
 )
 def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, trailing_stop, take_profit,
                           max_trades, entry_method, entry_offset, opening_range_bars, 
-                          volume_lookback, volume_multiple):
+                          volume_lookback, volume_multiple, confirmation_bar):
     # Validation
     if not ticker:
         return (html.P("⚠️ Please select a ticker first.", 
@@ -343,7 +358,8 @@ def run_backtest_callback(n_clicks, ticker, strategy, filters, stop_loss, traili
         entry_offset_pct=entry_offset_pct,
         opening_range_bars=opening_range_bars,
         volume_lookback=volume_lookback,
-        volume_multiple=volume_multiple
+        volume_multiple=volume_multiple,
+        confirmation_bar=confirmation_bar
     )
     
     # Run backtest

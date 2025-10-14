@@ -40,7 +40,7 @@ class BacktestConfig:
     def __init__(self, ticker, strategy, filters, stop_loss_pct, trailing_stop_pct, 
                  take_profit_pct=None, max_trades_per_day=1, entry_method='5min_next_candle',
                  entry_offset_pct=0.001, opening_range_bars=2, volume_lookback=20, 
-                 volume_multiple=1.5):
+                 volume_multiple=1.5, confirmation_bar='none'):
         self.ticker = ticker
         self.strategy = strategy  # 'sma_alignment', 'gap_breakout', or 'ema_momentum'
         self.filters = filters  # Dict of filter name -> enabled (bool)
@@ -53,6 +53,7 @@ class BacktestConfig:
         self.opening_range_bars = opening_range_bars  # Number of 5min bars for opening range
         self.volume_lookback = volume_lookback  # Lookback bars for volume average
         self.volume_multiple = volume_multiple  # Volume multiplier threshold
+        self.confirmation_bar = confirmation_bar  # 'none', 'high', or 'close'
 
 
 class BacktestResults:
@@ -300,6 +301,57 @@ def check_opening_range_breakout(data_5min, index, opening_range_bars):
     return current_row['close'] > opening_range_high
 
 
+def check_1min_confirmation(data_5min, index, ticker, confirmation_bar):
+    """
+    Check if the first 1-minute bar after the 5-minute signal confirms momentum.
+    
+    Args:
+        data_5min: 5-minute OHLCV data
+        index: Current candle index
+        ticker: Stock ticker symbol
+        confirmation_bar: 'none', 'high', or 'close'
+    
+    Returns:
+        bool: True if confirmation passes (or disabled)
+    """
+    if confirmation_bar == 'none':
+        return True  # Filter disabled
+    
+    current_row = data_5min.iloc[index]
+    signal_time = current_row['timestamp']
+    signal_high = current_row['high']
+    signal_close = current_row['close']
+    
+    # Load 1-minute data for this day
+    try:
+        trade_date = signal_time.date()
+        data_1min = load_1min_data_for_day(ticker, trade_date)
+        
+        if data_1min.empty:
+            return False  # No 1-minute data available
+        
+        # Find the first 1-minute bar AFTER the 5-minute signal bar
+        next_1min_bars = data_1min[data_1min['timestamp'] > signal_time]
+        
+        if next_1min_bars.empty:
+            return False  # No subsequent 1-minute bar
+        
+        first_1min_bar = next_1min_bars.iloc[0]
+        first_1min_close = first_1min_bar['close']
+        
+        # Check confirmation based on setting
+        if confirmation_bar == 'high':
+            return first_1min_close >= signal_high
+        elif confirmation_bar == 'close':
+            return first_1min_close >= signal_close
+        else:
+            return True  # Unknown setting, pass
+            
+    except Exception:
+        # If we can't load 1min data, don't fail the signal
+        return True
+
+
 def entry_signal_sma_alignment(data_5min, index, smma_21, smma_50, smma_200, 
                                 body_sizes, daily_data, daily_smma_21, daily_smma_50, 
                                 daily_smma_200, filters):
@@ -438,7 +490,8 @@ def entry_signal_gap_breakout(data_5min, index, vwap, rsi, filters, opening_rang
 
 def entry_signal_ema_momentum(data_5min, index, ema_9, ema_20, ema_50, rsi, 
                                daily_data, daily_smma_21, daily_smma_50, daily_smma_200,
-                               filters, volume_lookback, volume_multiple, opening_range_bars=0):
+                               filters, volume_lookback, volume_multiple, opening_range_bars=0,
+                               ticker=None, confirmation_bar='none'):
     """
     Check entry signal for EMA Momentum strategy with configurable filters.
     
@@ -447,6 +500,8 @@ def entry_signal_ema_momentum(data_5min, index, ema_9, ema_20, ema_50, rsi,
         volume_lookback: Number of bars to look back for volume average
         volume_multiple: Multiple for volume comparison
         opening_range_bars: Number of 5min bars for opening range (0 = disabled)
+        ticker: Stock ticker symbol (needed for 1min confirmation)
+        confirmation_bar: 'none', 'high', or 'close' for 1min confirmation
     """
     # Need minimum bars for indicators
     min_bars = max(50, volume_lookback) if volume_lookback else 50
@@ -512,6 +567,11 @@ def entry_signal_ema_momentum(data_5min, index, ema_9, ema_20, ema_50, rsi,
     # Opening Range Breakout: price must be above opening range high
     if opening_range_bars > 0:
         if not check_opening_range_breakout(data_5min, index, opening_range_bars):
+            return False
+    
+    # 1-Minute Confirmation: first 1min bar after signal confirms momentum
+    if confirmation_bar != 'none' and ticker:
+        if not check_1min_confirmation(data_5min, index, ticker, confirmation_bar):
             return False
     
     return True
@@ -879,7 +939,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
                     data_5min, i, ema_9, ema_20, ema_50, rsi,
                     daily_data, daily_smma_21, daily_smma_50, daily_smma_200,
                     config.filters, config.volume_lookback, config.volume_multiple,
-                    config.opening_range_bars
+                    config.opening_range_bars, config.ticker, config.confirmation_bar
                 )
             
             if entry_signal:
