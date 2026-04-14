@@ -369,6 +369,18 @@ def main():
     output = output.round({"Price": 2, "Change": 4, "RS": 2, "Vol Ratio": 2,
                            "Base Depth %": 1, "Tightness": 2})
 
+    # Record results in the tracker (never blocks the main flow)
+    try:
+        from tracker import record_screener_run
+        tracked = output[output['Sharia'] != 'FAILED']
+        tickers_data = [
+            {'ticker': row['Ticker'], 'price': row['Price'], 'score': row['Score']}
+            for _, row in tracked.iterrows()
+        ]
+        record_screener_run(tickers_data, 'v2')
+    except Exception as e:
+        print(f"[Tracker] Warning — could not record run: {e}")
+
     # ── Column ordering: key metrics first ──
     priority = ["Ticker", "Company", "Score", "RS", "Price", "Change", "Volume",
                 "Vol Ratio", "Base Depth %", "Tightness", "Sector", "Industry",

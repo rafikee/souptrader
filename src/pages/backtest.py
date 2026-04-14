@@ -226,16 +226,16 @@ def create_layout():
                 ], style={'marginBottom': '10px'}),
                 
                 html.Div([
-                    html.Label("1-Min Confirmation:", style={'marginRight': '10px'}),
+                    html.Label("1-Min Confirmation Entry (overrides Entry Method):", style={'marginRight': '10px'}),
                     dcc.Dropdown(
                         id='confirmation-bar-dropdown',
                         options=[
-                            {'label': 'None (Disabled)', 'value': 'none'},
-                            {'label': '1-Min Close ≥ 5-Min High', 'value': 'high'},
-                            {'label': '1-Min Close ≥ 5-Min Close', 'value': 'close'},
+                            {'label': 'Disabled (use Entry Method)', 'value': 'none'},
+                            {'label': 'Enter if 1-Min Close ≥ 5-Min High', 'value': 'high'},
+                            {'label': 'Enter if 1-Min Close ≥ 5-Min Close', 'value': 'close'},
                         ],
                         value='none',
-                        style={'width': '280px'}
+                        style={'width': '380px'}
                     ),
                 ], style={'marginBottom': '10px'}),
                 

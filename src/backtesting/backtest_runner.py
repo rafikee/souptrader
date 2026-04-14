@@ -301,57 +301,6 @@ def check_opening_range_breakout(data_5min, index, opening_range_bars):
     return current_row['close'] > opening_range_high
 
 
-def check_1min_confirmation(data_5min, index, ticker, confirmation_bar):
-    """
-    Check if the first 1-minute bar after the 5-minute signal confirms momentum.
-    
-    Args:
-        data_5min: 5-minute OHLCV data
-        index: Current candle index
-        ticker: Stock ticker symbol
-        confirmation_bar: 'none', 'high', or 'close'
-    
-    Returns:
-        bool: True if confirmation passes (or disabled)
-    """
-    if confirmation_bar == 'none':
-        return True  # Filter disabled
-    
-    current_row = data_5min.iloc[index]
-    signal_time = current_row['timestamp']
-    signal_high = current_row['high']
-    signal_close = current_row['close']
-    
-    # Load 1-minute data for this day
-    try:
-        trade_date = signal_time.date()
-        data_1min = load_1min_data_for_day(ticker, trade_date)
-        
-        if data_1min.empty:
-            return False  # No 1-minute data available
-        
-        # Find the first 1-minute bar AFTER the 5-minute signal bar
-        next_1min_bars = data_1min[data_1min['timestamp'] > signal_time]
-        
-        if next_1min_bars.empty:
-            return False  # No subsequent 1-minute bar
-        
-        first_1min_bar = next_1min_bars.iloc[0]
-        first_1min_close = first_1min_bar['close']
-        
-        # Check confirmation based on setting
-        if confirmation_bar == 'high':
-            return first_1min_close >= signal_high
-        elif confirmation_bar == 'close':
-            return first_1min_close >= signal_close
-        else:
-            return True  # Unknown setting, pass
-            
-    except Exception:
-        # If we can't load 1min data, don't fail the signal
-        return True
-
-
 def entry_signal_sma_alignment(data_5min, index, smma_21, smma_50, smma_200, 
                                 body_sizes, daily_data, daily_smma_21, daily_smma_50, 
                                 daily_smma_200, filters):
@@ -569,11 +518,6 @@ def entry_signal_ema_momentum(data_5min, index, ema_9, ema_20, ema_50, rsi,
         if not check_opening_range_breakout(data_5min, index, opening_range_bars):
             return False
     
-    # 1-Minute Confirmation: first 1min bar after signal confirms momentum
-    if confirmation_bar != 'none' and ticker:
-        if not check_1min_confirmation(data_5min, index, ticker, confirmation_bar):
-            return False
-    
     return True
 
 
@@ -608,7 +552,7 @@ def load_1min_data_for_day(ticker, trade_date):
 def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price, 
                              stop_loss_pct, trailing_stop_pct, take_profit_pct, 
                              log_func, entry_method='5min_next_candle', entry_offset_pct=0.001,
-                             data_5min=None, signal_index=None):
+                             data_5min=None, signal_index=None, confirmation_bar='none'):
     """
     Execute a trade using NBBO data for realistic entry/exit.
     
@@ -617,6 +561,7 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
         entry_offset_pct: Percentage offset for buy stop (e.g., 0.001 for 0.1%)
         data_5min: 5min bar data (required for 5min_next_candle method)
         signal_index: Index in 5min data where signal occurred
+        confirmation_bar: 'none', 'high', or 'close' - 1min confirmation requirement
         log_func: Function to call for logging (takes a string message)
     
     Returns:
@@ -630,18 +575,9 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
         log_func(f"ERROR: {str(e)}")
         return None
     
-    # Calculate buy stop price based on entry method
-    if entry_method == '5min_next_candle':
-        # Use next 5min candle open + offset
-        if data_5min is None or signal_index is None or signal_index + 1 >= len(data_5min):
-            log_func(f"  ERROR: Cannot get next 5min candle")
-            return None
-        next_candle_open = data_5min.iloc[signal_index + 1]['open']
-        buy_stop_price = next_candle_open + (next_candle_open * entry_offset_pct)
-        log_func(f"  Entry method: Next 5min candle open (${next_candle_open:.2f}) + {entry_offset_pct*100:.2f}%")
-    
-    elif entry_method == '1min_first_bar':
-        # Load 1min data and find first bar after signal
+    # Handle 1-min confirmation entry (overrides entry_method if enabled)
+    if confirmation_bar != 'none':
+        # Load 1min data
         try:
             onemin_data = load_1min_data_for_day(ticker, trade_date)
         except FileNotFoundError as e:
@@ -651,16 +587,64 @@ def execute_trade_with_nbbo(ticker, entry_signal_time, entry_signal_price,
         # Find first 1min bar after signal time
         onemin_after_signal = onemin_data[onemin_data['timestamp'] > entry_signal_time]
         if len(onemin_after_signal) == 0:
-            log_func(f"  ERROR: No 1min bars found after signal")
+            log_func(f"  No 1min bars found after signal - skipping trade")
             return None
         
         first_1min_bar = onemin_after_signal.iloc[0]
+        signal_bar = data_5min.iloc[signal_index]
+        
+        # Check confirmation
+        if confirmation_bar == 'high':
+            confirmation_threshold = signal_bar['high']
+            passes = first_1min_bar['close'] >= confirmation_threshold
+            log_func(f"  1-Min Confirmation: {first_1min_bar['close']:.2f} vs 5-Min High {confirmation_threshold:.2f} = {'PASS' if passes else 'FAIL'}")
+        elif confirmation_bar == 'close':
+            confirmation_threshold = signal_bar['close']
+            passes = first_1min_bar['close'] >= confirmation_threshold
+            log_func(f"  1-Min Confirmation: {first_1min_bar['close']:.2f} vs 5-Min Close {confirmation_threshold:.2f} = {'PASS' if passes else 'FAIL'}")
+        else:
+            passes = True
+        
+        if not passes:
+            log_func(f"  Trade skipped - 1-min confirmation failed")
+            return None
+        
+        # If confirmation passes, enter at 1min bar close + offset
         buy_stop_price = first_1min_bar['close'] + (first_1min_bar['close'] * entry_offset_pct)
-        log_func(f"  Entry method: First 1min bar close (${first_1min_bar['close']:.2f}) + {entry_offset_pct*100:.2f}%")
+        log_func(f"  Entry method: 1-Min Confirmation at close (${first_1min_bar['close']:.2f}) + {entry_offset_pct*100:.2f}%")
     
+    # Calculate buy stop price based on entry method (only if no confirmation)
     else:
-        log_func(f"  ERROR: Unknown entry method: {entry_method}")
-        return None
+        if entry_method == '5min_next_candle':
+            # Use next 5min candle open + offset
+            if data_5min is None or signal_index is None or signal_index + 1 >= len(data_5min):
+                log_func(f"  ERROR: Cannot get next 5min candle")
+                return None
+            next_candle_open = data_5min.iloc[signal_index + 1]['open']
+            buy_stop_price = next_candle_open + (next_candle_open * entry_offset_pct)
+            log_func(f"  Entry method: Next 5min candle open (${next_candle_open:.2f}) + {entry_offset_pct*100:.2f}%")
+        
+        elif entry_method == '1min_first_bar':
+            # Load 1min data and find first bar after signal
+            try:
+                onemin_data = load_1min_data_for_day(ticker, trade_date)
+            except FileNotFoundError as e:
+                log_func(f"  ERROR: {str(e)}")
+                return None
+            
+            # Find first 1min bar after signal time
+            onemin_after_signal = onemin_data[onemin_data['timestamp'] > entry_signal_time]
+            if len(onemin_after_signal) == 0:
+                log_func(f"  ERROR: No 1min bars found after signal")
+                return None
+            
+            first_1min_bar = onemin_after_signal.iloc[0]
+            buy_stop_price = first_1min_bar['close'] + (first_1min_bar['close'] * entry_offset_pct)
+            log_func(f"  Entry method: First 1min bar close (${first_1min_bar['close']:.2f}) + {entry_offset_pct*100:.2f}%")
+        
+        else:
+            log_func(f"  ERROR: Unknown entry method: {entry_method}")
+            return None
     
     # Find entry point: look for NBBO tick where ask >= buy stop price
     # Start from the signal time onwards
@@ -957,7 +941,8 @@ def run_backtest(config: BacktestConfig) -> BacktestResults:
                     entry_method=config.entry_method,
                     entry_offset_pct=config.entry_offset_pct,
                     data_5min=data_5min,
-                    signal_index=i
+                    signal_index=i,
+                    confirmation_bar=config.confirmation_bar
                 )
                 
                 if trade:

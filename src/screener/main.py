@@ -333,6 +333,19 @@ def main():
 
     # Round for appearance
     output = output.round({"Volume": 0, "Market Cap": 0, "Price": 2, "Change": 4})
+
+    # Record results in the tracker (never blocks the main flow)
+    try:
+        from tracker import record_screener_run
+        tracked = output[(output['cond count'] == 6) & (output['Sharia'] != 'FAILED')]
+        tickers_data = [
+            {'ticker': row['Ticker'], 'price': row['Price']}
+            for _, row in tracked.iterrows()
+        ]
+        record_screener_run(tickers_data, 'v1')
+    except Exception as e:
+        print(f"[Tracker] Warning — could not record run: {e}")
+
     col_count = len(output.columns)  # how many columns are in the df
     # convert col count to column letter in sheet for formatting
     letter = chr(col_count + 64)
